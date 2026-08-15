@@ -8,10 +8,10 @@ Unit tests for crsf_protocol. Runs anywhere - no Pi, no serial, no camera.
 import random
 import sys
 
+from config import CRSF_SYNC, TYPE_RC_CHANNELS, CRSF_MIN, CRSF_MID, CRSF_MAX
 from crsf_protocol import (crc8_dvb_s2, unpack_channels, pack_channels,
                            build_frame, parse_frames, crsf_to_us,
                            clamp_channel, crsf_to_range)
-from config import CRSF_SYNC, TYPE_RC_CHANNELS, CRSF_MIN, CRSF_MID, CRSF_MAX
 
 failures = []
 

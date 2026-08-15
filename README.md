@@ -23,10 +23,10 @@ Known-bad: **GPIO0** (pin 27) — low-side driver damaged, never use as UART TX.
 |---|---|---|
 | `config.py` | every tunable constant, channel map | no |
 | `crsf_protocol.py` | CRC, pack/unpack, frame parsing | no |
-| `state.py` | `TargetState` (thread-safe), `Stats` | no |
-| `controller.py` | PD control law + safety gates | no |
-| `tracker.py` | selection/lock state machine, error + rate | no |
-| `vision.py` | IMX500 / picamera2 wrapper | camera |
+| `state.py` | `TargetState`, `ChannelState`, `ArmState`, `RescueState` (all thread-safe), `Stats` | no |
+| `controller.py` | PID control law + safety gates | no |
+| `tracker.py` | `AuxLock` (detection lock), `ArmLatch`, `GpsRescueLatch`, `ErrorTracker` (error + rate) | no |
+| `vision.py` | IMX500 / picamera2 wrapper, auto-zoom | camera |
 | `bridge.py` | serial ports and forwarding threads | serial |
 | `overlay.py` | all OpenCV drawing | cv2 |
 | `main_bridge.py` | entry: plain pass-through bridge | serial |
@@ -37,10 +37,11 @@ Dependency direction is one-way:
 
 ```
 config
-  └── crsf_protocol ── bridge ──┐
-  └── state ── controller ──────┼── main_ai
-  └── vision ── tracker ────────┤
-                overlay ────────┘
+  ├── crsf_protocol ── bridge ────────┐
+  ├── crsf_protocol ── controller ────┤
+  ├── state ── bridge, controller ────┤
+  ├── vision ── tracker ──────────────┼── main_ai
+  └── overlay ─────────────────────────┘
 ```
 
 Nothing imports upward, so `crsf_protocol`, `controller` and `tracker` can
@@ -54,7 +55,6 @@ source ~/crsf_env/bin/activate      # needs --system-site-packages
 python3 test_protocol.py            # verify protocol layer, no hardware
 python3 main_bridge.py --labels     # serial path only
 python3 main_ai.py                  # full stack
-python3 main_ai.py --axis yaw       # horizontal error drives yaw
 python3 main_ai.py --no-display     # headless
 ```
 
@@ -72,25 +72,53 @@ python3 main_ai.py --no-display     # headless
 All 16 channels are always decoded and re-encoded; `--show` only affects
 what gets printed.
 
+Aux5 (lock), Aux1 (arm), Aux4 (GPS rescue) and Aux6 (zoom) are all
+repurposed as Pi-side controls — see `config.py`'s comments on each — and
+none of their raw values ever reach the FC unmodified.
+
 ## Safety gates
 
-`TrackController.apply()` returns channels unchanged unless all pass:
+`TrackController.apply()` in `controller.py`:
 
-1. `AI_ENABLE_CH` (CH6) above `AI_ENABLE_MIN`
-2. vision data newer than `VISION_TIMEOUT`
-3. a target is locked
-4. output clamped to ±`MAX_AUTHORITY`
+- Aux5/Aux6 (lock/zoom) are always neutralised — never forwarded to the FC.
+- Aux1 (arm) and Aux4 (GPS rescue) are never a raw passthrough of the pilot's
+  switch — their output is entirely decided by `tracker.ArmLatch` /
+  `tracker.GpsRescueLatch`.
+- **Not armed:** the pilot has full manual control of every channel.
+- **Armed and actively tracking** (a fresh, locked target, not in GPS rescue):
+  roll/pitch are **fully replaced** by two independently-tuned PID loops
+  (not added to the pilot's stick input — the sticks have zero effect on
+  those two axes), clamped to ±`MAX_DEFLECTION`. Throttle is forced to
+  `THROTTLE_ARMED` (max).
+- **Armed, SEARCHING** (target lost): roll/pitch go neutral, throttle drops
+  to `THROTTLE_SEARCHING` (80%).
+- **GPS_RESCUE** (latched): roll/pitch go neutral, throttle centres, so the
+  FC's own GPS Rescue flight mode (engaged via Aux4/CH8) can take over
+  navigation.
 
-Corrections are **added** to pilot stick input, never substituted, so the
-pilot can always override. Throttle and aux channels are never touched.
+Arming requires a target to already be `LOCKED` (via Aux5/`AuxLock`), then a
+low→high edge on Aux1 while still locked (`tracker.ArmLatch`). **Arming is a
+one-way latch** — nothing in software disarms it once triggered, not Aux1
+dropping, not losing the lock. GPS_RESCUE is the same: it latches
+permanently on either 5s of continuous SEARCHING or Aux4 going high while
+armed, and nothing clears it afterward. The only way back to manual control
+is stopping the script (Ctrl+C).
 
 ## Bench test before flying
 
 Props off, battery out, FC on USB. In Betaflight's Receiver tab:
 
-- AI switch off → bars mirror sticks exactly
-- AI switch on, target locked → CH1/CH2 nudge, and the nudge should be
-  *corrective* (step right, bar should move the way that re-centres you).
-  Backwards means flip `ROLL_SIGN` / `PITCH_SIGN` in `config.py`.
-- AI switch off mid-track → bars snap back to pure stick input
-- Ctrl+C the script → bars go to failsafe, never hold a stale correction
+- Not armed → CH1/CH2/CH3 mirror the sticks exactly; CH5 (arm) and CH8
+  (rescue) sit low regardless of switch position; CH9/CH10 (lock/zoom)
+  always sit centred.
+- Lock onto a target (Aux5), then raise Aux1 → CH5 snaps high, CH3 jumps to
+  max, and CH1/CH2 stop following the sticks entirely, driven by the PID
+  instead. The correction should be *corrective* (step right, the bars
+  should move the way that re-centres you) — backwards means flip
+  `ROLL_SIGN` / `PITCH_SIGN` in `config.py`.
+- This is a **one-way transition** — lowering Aux1, Aux5, or anything else
+  will not undo it once armed.
+- Losing the target (SEARCHING) → CH1/CH2 recentre, CH3 drops to ~80%.
+- 5s of continuous SEARCHING, or raising Aux4 while armed → GPS_RESCUE: CH8
+  snaps high, CH1/CH2/CH3 all centre.
+- Ctrl+C the script → bars go to failsafe, never hold a stale correction.

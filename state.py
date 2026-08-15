@@ -20,12 +20,6 @@ class TargetState:
         self._locked = False
         self._stamp = 0.0
 
-        # Diagnostics: written by the control layer, read by the overlay.
-        # Plain attributes - approximate values are fine for display.
-        self.last_horiz_corr = 0
-        self.last_vert_corr = 0
-        self.ai_engaged = False
-
     def publish(self, ex, ey, ex_rate, ey_rate):
         """Called by vision when a locked target has been measured."""
         with self._lock:
@@ -76,7 +70,24 @@ class ChannelState:
             return self._input, self._output, self._stamp
 
 
-class ArmState:
+class _BoolFlag:
+    """Thread-safe boolean flag - the shared shape behind ArmState and
+    RescueState below, which differ only in what the flag means."""
+
+    def __init__(self):
+        self._lock = threading.Lock()
+        self._value = False
+
+    def set(self, value):
+        with self._lock:
+            self._value = value
+
+    def get(self):
+        with self._lock:
+            return self._value
+
+
+class ArmState(_BoolFlag):
     """Thread-safe boolean flag for the ARMED latch.
 
     The vision/main thread calls set() whenever tracker.ArmLatch's
@@ -84,38 +95,14 @@ class ArmState:
     decide whether to force the arm channel high.
     """
 
-    def __init__(self):
-        self._lock = threading.Lock()
-        self._armed = False
 
-    def set(self, armed):
-        with self._lock:
-            self._armed = armed
-
-    def get(self):
-        with self._lock:
-            return self._armed
-
-
-class RescueState:
+class RescueState(_BoolFlag):
     """Thread-safe boolean flag for the GPS-rescue latch.
 
     The vision/main thread calls set() whenever tracker.GpsRescueLatch's
     decision changes. The bridge thread calls get() every RC frame to
     decide whether to force the rescue channel (CH8/Aux4) high.
     """
-
-    def __init__(self):
-        self._lock = threading.Lock()
-        self._rescue = False
-
-    def set(self, rescue):
-        with self._lock:
-            self._rescue = rescue
-
-    def get(self):
-        with self._lock:
-            return self._rescue
 
 
 class Stats:

@@ -12,7 +12,9 @@ import time
 
 import serial
 
-from config import PORT_UP, PORT_DOWN, BAUD, TYPE_RC_CHANNELS
+from config import (PORT_UP, PORT_DOWN, BAUD, TYPE_RC_CHANNELS,
+                    SERIAL_READ_TIMEOUT, STOP_GRACE_S,
+                    FORWARD_ERROR_BACKOFF_S, TELEMETRY_ERROR_BACKOFF_S)
 from crsf_protocol import (unpack_channels, pack_channels, build_frame,
                            parse_frames)
 from state import Stats
@@ -31,8 +33,10 @@ class CrsfBridge:
         self.on_channels = on_channels
         self.stats = Stats()
 
-        self.up = serial.Serial(port_up, baudrate=baud_up, timeout=0.02)
-        self.down = serial.Serial(port_down, baudrate=baud_down, timeout=0.02)
+        self.up = serial.Serial(port_up, baudrate=baud_up,
+                                timeout=SERIAL_READ_TIMEOUT)
+        self.down = serial.Serial(port_down, baudrate=baud_down,
+                                  timeout=SERIAL_READ_TIMEOUT)
 
         self._threads = []
         self._running = False
@@ -49,7 +53,8 @@ class CrsfBridge:
 
     def stop(self):
         self._running = False
-        time.sleep(0.05)
+        for t in self._threads:
+            t.join(timeout=STOP_GRACE_S)
         try:
             self.up.close()
             self.down.close()
@@ -87,7 +92,7 @@ class CrsfBridge:
 
             except Exception as exc:
                 print(f"\n[bridge/forward] {exc}", file=sys.stderr)
-                time.sleep(0.05)
+                time.sleep(FORWARD_ERROR_BACKOFF_S)
 
     def _pump_telemetry(self):
         """Flight controller -> receiver. Always transparent."""
@@ -97,5 +102,6 @@ class CrsfBridge:
                 if data:
                     self.up.write(data)
                     self.stats.bytes_telemetry += len(data)
-            except Exception:
-                time.sleep(0.01)
+            except Exception as exc:
+                print(f"\n[bridge/telemetry] {exc}", file=sys.stderr)
+                time.sleep(TELEMETRY_ERROR_BACKOFF_S)

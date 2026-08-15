@@ -112,6 +112,9 @@ class Camera:
         self.picam2.start(self.config)
         self.size = size
         self._full_crop = self.picam2.camera_properties.get("ScalerCropMaximum")
+        if not self._full_crop:
+            print("IMX500: ScalerCropMaximum not available - set_zoom() "
+                  "will have no effect", file=sys.stderr)
 
         # Needed to sync the network's own analysis crop to the zoom - without
         # this, ScalerCrop alone only crops what's *displayed*; the IMX500

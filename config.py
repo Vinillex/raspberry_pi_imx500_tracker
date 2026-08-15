@@ -14,6 +14,14 @@ PORT_UP = "/dev/ttyAMA0"      # from ELRS receiver
 PORT_DOWN = "/dev/ttyAMA2"    # to flight controller R2 pad (GPIO4/5)
 BAUD = 420000                 # fixed by ELRS / Betaflight CRSF
 
+SERIAL_READ_TIMEOUT = 0.02          # s; pyserial read() timeout on both ports
+STOP_GRACE_S = 0.05                 # s; grace period in CrsfBridge.stop()
+                                     # before closing the ports
+FORWARD_ERROR_BACKOFF_S = 0.05      # s; retry delay after an error on the
+                                     # receiver->FC pump
+TELEMETRY_ERROR_BACKOFF_S = 0.01    # s; retry delay after an error on the
+                                     # FC->receiver telemetry pump
+
 # --------------------------------------------------------------------------
 # CRSF protocol
 # --------------------------------------------------------------------------
@@ -83,6 +91,7 @@ DEADZONE = 0.06                # normalised error below which nothing is done
 VISION_TIMEOUT = 0.25          # s; stale/absent target error is discarded
 RC_TIMEOUT = 0.5               # s; no RC frames in this window means the receiver is gone
 RATE_ALPHA = 0.35              # EMA smoothing on the derivative term
+FPS_ALPHA = 0.1                # EMA smoothing on the displayed frame rate
 
 ROLL_SIGN = +1                 # flip if corrections push the wrong way
 PITCH_SIGN = +1
@@ -114,16 +123,18 @@ AUTO_ZOOM_EDGE_MARGIN_FRAC = 0.08   # if the box is within this fraction of any
                                      # risks cropping the target out entirely
 
 LOCK_CH = CH_AUX5             # switch that locks onto the current detection
-LOCK_CH_MIN = 1300             # must exceed this to lock, mirrors AI_ENABLE_MIN
+LOCK_CH_MIN = 1300             # must be at or above this to lock
 
 ARM_CH = CH_AUX1              # switch that arms, but only edge-triggered
-ARM_CH_MIN = 1300              # must exceed this to count as "high"
+ARM_CH_MIN = 1300              # must be at or above this to count as "high"
 
 GPS_RESCUE_TIMEOUT = 5.0       # s of continuous SEARCHING (while ARMED) before
                                 # GPS_RESCUE triggers
-RESCUE_CH = CH_AUX4            # manual GPS-rescue override - unconditional,
-                                # level-triggered, no interlock required
-RESCUE_CH_MIN = 1300            # must exceed this to count as "high"
+RESCUE_CH = CH_AUX4            # manual GPS-rescue override - level-triggered,
+                                # but only takes effect while already ARMED
+                                # (see main_ai.py); the timeout path above is
+                                # the only trigger that works before arming
+RESCUE_CH_MIN = 1300            # must be at or above this to count as "high"
 
 # --------------------------------------------------------------------------
 # Display colours (BGR)

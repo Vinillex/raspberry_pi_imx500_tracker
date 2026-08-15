@@ -23,6 +23,13 @@ def clamp(v, lo, hi):
     return max(lo, min(hi, v))
 
 
+def _set_channel(channels, ch, value):
+    """channels[ch] = value, if that index exists - a no-op otherwise
+    for channel lists shorter than expected."""
+    if len(channels) > ch:
+        channels[ch] = value
+
+
 class PID:
     """Simple PID with anti-windup clamping on the integral term.
 
@@ -83,16 +90,11 @@ class TrackController:
 
     def apply(self, channels):
         """Returns the (possibly modified) channel list."""
-        self.target.ai_engaged = False
-        self.target.last_horiz_corr = 0
-        self.target.last_vert_corr = 0
-
         # Aux5 (detection lock) and Aux6 (camera zoom) are repurposed as
         # Pi-side controls (see vision.py / tracker.py / main_ai.py) and
         # must never reach the FC - neutralise them unconditionally.
         for aux_ch in REPURPOSED_CHANNELS:
-            if len(channels) > aux_ch:
-                channels[aux_ch] = CRSF_MID
+            _set_channel(channels, aux_ch, CRSF_MID)
 
         # Aux1/CH5 is the arm channel forwarded to the FC - it has NO
         # direct connection to the pilot's raw Aux1 value at all, armed
@@ -100,15 +102,14 @@ class TrackController:
         # (tracker.ArmLatch, driven from main_ai.py, which requires the
         # LOCKED-first interlock): high only while armed, low otherwise.
         armed = self.arm_state.get()
-        if len(channels) > CH_AUX1:
-            channels[CH_AUX1] = CRSF_MAX if armed else CRSF_MIN
+        _set_channel(channels, CH_AUX1, CRSF_MAX if armed else CRSF_MIN)
 
         # Aux4/CH8 is the GPS-rescue channel forwarded to the FC - same
         # treatment as CH5: fully decided by the software latch
         # (tracker.GpsRescueLatch, driven from main_ai.py), never a raw
         # passthrough of the pilot's Aux4 switch.
-        if len(channels) > CH_AUX4:
-            channels[CH_AUX4] = CRSF_MAX if self.rescue_state.get() else CRSF_MIN
+        _set_channel(channels, CH_AUX4,
+                    CRSF_MAX if self.rescue_state.get() else CRSF_MIN)
 
         now = time.monotonic()
         dt = max(now - self._prev_t, 1e-3)
@@ -138,18 +139,15 @@ class TrackController:
             # and centre is the safer default if it isn't.
             self.roll_pid.reset()
             self.pitch_pid.reset()
-            if len(channels) > CH_ROLL:
-                channels[CH_ROLL] = CRSF_MID
-            if len(channels) > CH_PITCH:
-                channels[CH_PITCH] = CRSF_MID
-            if len(channels) > CH_THROTTLE:
-                channels[CH_THROTTLE] = CRSF_MID if rescue else THROTTLE_SEARCHING
+            _set_channel(channels, CH_ROLL, CRSF_MID)
+            _set_channel(channels, CH_PITCH, CRSF_MID)
+            _set_channel(channels, CH_THROTTLE,
+                        CRSF_MID if rescue else THROTTLE_SEARCHING)
             return channels
 
         # ARMED with a fresh, locked target, not in rescue - full
         # throttle and active tracking.
-        if len(channels) > CH_THROTTLE:
-            channels[CH_THROTTLE] = THROTTLE_ARMED
+        _set_channel(channels, CH_THROTTLE, THROTTLE_ARMED)
 
         roll_out = 0.0
         if abs(ex) > DEADZONE:
@@ -166,9 +164,6 @@ class TrackController:
         channels[CH_ROLL] = clamp_channel(CRSF_MID + roll_out)
         channels[CH_PITCH] = clamp_channel(CRSF_MID + pitch_out)
 
-        self.target.ai_engaged = True
-        self.target.last_horiz_corr = int(roll_out)
-        self.target.last_vert_corr = int(pitch_out)
         return channels
 
 

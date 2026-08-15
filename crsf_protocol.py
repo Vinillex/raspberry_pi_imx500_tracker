@@ -5,7 +5,7 @@ Pure functions only - no serial I/O, no threads, no global state.
 This module can be imported and unit tested on any machine.
 """
 
-from config import CRSF_SYNC, CRSF_MIN, CRSF_MAX
+from config import CRSF_SYNC, CRSF_MIN, CRSF_MID, CRSF_MAX
 
 
 def crc8_dvb_s2(data: bytes) -> int:
@@ -97,7 +97,7 @@ def parse_frames(buf: bytearray):
 
 def crsf_to_us(value: int) -> int:
     """Raw CRSF (172-1811) -> servo microseconds (988-2012)."""
-    return round((value - 992) * 5 / 8 + 1500)
+    return round((value - CRSF_MID) * 5 / 8 + 1500)
 
 
 def clamp_channel(value) -> int:
