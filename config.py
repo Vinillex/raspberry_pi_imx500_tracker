@@ -55,14 +55,18 @@ CH_NAMES = ["Roll", "Pitch", "Thr", "Yaw",
             "CH11", "CH12", "CH13", "CH14", "CH15", "CH16"]
 
 # --------------------------------------------------------------------------
-# Control - once ARMED, roll/pitch are FULLY overridden (not added to
-# pilot input - the pilot's sticks have zero effect on those two axes)
-# by two independently-tuned PID loops, and throttle is forced to max.
-# See controller.py. There is no manual enable channel any more: ARMED
+# Control - tracking (PID roll/pitch override) runs ONLY in the ARMED
+# state (armed + a fresh locked target) - never in SEARCHING or
+# GPS_RESCUE, even though both can only happen while armed=True. See
+# controller.py. There is no manual enable channel any more: ARMED
 # alone is the gate.
 # --------------------------------------------------------------------------
 MAX_DEFLECTION = 700           # max counts roll/pitch may sit away from
                                 # CRSF_MID once armed (hard output clamp)
+
+THROTTLE_ARMED = CRSF_MAX                              # ARMED, actively tracking
+THROTTLE_SEARCHING = int(CRSF_MIN + 0.8 * (CRSF_MAX - CRSF_MIN))  # SEARCHING - 80%,
+                                                        # no tracking
 
 ROLL_KP = 260.0                 # proportional gain (counts per unit error)
 ROLL_KI = 0.0                   # integral gain - starts at 0, windup-prone,

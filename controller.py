@@ -9,7 +9,8 @@ import time
 
 from config import (ROLL_KP, ROLL_KI, ROLL_KD, ROLL_I_MAX,
                     PITCH_KP, PITCH_KI, PITCH_KD, PITCH_I_MAX,
-                    MAX_DEFLECTION, DEADZONE, VISION_TIMEOUT,
+                    MAX_DEFLECTION, THROTTLE_ARMED, THROTTLE_SEARCHING,
+                    DEADZONE, VISION_TIMEOUT,
                     ROLL_SIGN, PITCH_SIGN, CH_ROLL, CH_PITCH, CH_THROTTLE,
                     CH_AUX1, CH_AUX4, CH_AUX5, CH_AUX6,
                     CRSF_MIN, CRSF_MID, CRSF_MAX)
@@ -48,19 +49,28 @@ class PID:
 
 class TrackController:
     """
-    Full autonomous override, once ARMED.
+    Full autonomous override, but ONLY while actively tracking.
+
+    Tracking - the PID roll/pitch override - runs exclusively in the
+    ARMED state: armed AND a fresh, locked target. It does NOT run in
+    SEARCHING (armed, target lost - throttle drops to THROTTLE_SEARCHING,
+    roll/pitch go neutral) or GPS_RESCUE (rescue_state latched - roll/
+    pitch neutral and throttle to CRSF_MID, letting the FC's own GPS
+    Rescue flight mode, engaged via Aux4/CH8, take over navigation).
+    LOCKED/DETECTED/etc. are pre-arm states and are already excluded by
+    the top-level `armed` gate.
 
     Unlike a bumper-correction design, this does NOT add a bounded
-    nudge on top of pilot input - once armed, the pilot's roll/pitch
-    sticks have zero effect. Two independently-tuned PID loops drive
-    roll/pitch directly toward the locked target (TargetState, fed by
-    tracker.ErrorTracker), and throttle is forced to CRSF_MAX. Yaw and
-    all channels not explicitly handled here pass straight through.
+    nudge on top of pilot input - whenever tracking is active, the
+    pilot's roll/pitch sticks have zero effect. Two independently-tuned
+    PID loops drive roll/pitch directly toward the locked target
+    (TargetState, fed by tracker.ErrorTracker). Yaw and all channels
+    not explicitly handled here pass straight through.
 
     There is no manual "AI enable" channel - ARMED (tracker.ArmLatch,
-    itself gated by LOCKED-first, see main_ai.py) is the sole gate, and
-    once armed there is no software path back to manual roll/pitch
-    control short of restarting the script.
+    itself gated by LOCKED-first, see main_ai.py) is the sole top-level
+    gate, and once armed there is no software path back to manual
+    roll/pitch control short of restarting the script.
     """
 
     def __init__(self, target_state, arm_state, rescue_state):
@@ -112,26 +122,34 @@ class TrackController:
             self.pitch_pid.reset()
             return channels
 
-        # ARMED: throttle forced to max, unconditionally - not gated on
-        # having a target, only on being armed at all.
-        if len(channels) > CH_THROTTLE:
-            channels[CH_THROTTLE] = CRSF_MAX
-
+        rescue = self.rescue_state.get()
         ex, ey, ex_rate, ey_rate, locked, stamp = self.target.snapshot()
         fresh = (now - stamp) <= VISION_TIMEOUT
+        tracking = locked and fresh and not rescue
 
-        if not locked or not fresh:
-            # Nothing to track right now (SEARCHING, or a stalled vision
-            # loop) - hold roll/pitch neutral rather than coast on a
+        if not tracking:
+            # SEARCHING (no/stale target) or GPS_RESCUE - no tracking
+            # either way. Hold roll/pitch neutral rather than coast on a
             # stale/absent error, and don't let the integral wind up
-            # against a signal that isn't there.
+            # against a signal that isn't there. Throttle: SEARCHING
+            # drops to THROTTLE_SEARCHING (80%); GPS_RESCUE goes to
+            # CRSF_MID - the FC's own GPS Rescue mode (engaged via
+            # Aux4/CH8) ignores RC throttle input anyway once active,
+            # and centre is the safer default if it isn't.
             self.roll_pid.reset()
             self.pitch_pid.reset()
             if len(channels) > CH_ROLL:
                 channels[CH_ROLL] = CRSF_MID
             if len(channels) > CH_PITCH:
                 channels[CH_PITCH] = CRSF_MID
+            if len(channels) > CH_THROTTLE:
+                channels[CH_THROTTLE] = CRSF_MID if rescue else THROTTLE_SEARCHING
             return channels
+
+        # ARMED with a fresh, locked target, not in rescue - full
+        # throttle and active tracking.
+        if len(channels) > CH_THROTTLE:
+            channels[CH_THROTTLE] = THROTTLE_ARMED
 
         roll_out = 0.0
         if abs(ex) > DEADZONE:
