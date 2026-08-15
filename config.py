@@ -1,0 +1,121 @@
+"""
+Central configuration for the rpi_ai project.
+
+Everything tunable lives here so the other modules stay logic-only.
+Import as:  from config import KP, CH_ROLL, ...
+"""
+
+# --------------------------------------------------------------------------
+# Serial ports (Raspberry Pi 5)
+# --------------------------------------------------------------------------
+# NOTE: on a Pi 5 the GPIO14/15 UART is /dev/ttyAMA0.
+# /dev/serial0 points at ttyAMA10, the separate debug-header UART.
+PORT_UP = "/dev/ttyAMA0"      # from ELRS receiver
+PORT_DOWN = "/dev/ttyAMA2"    # to flight controller R2 pad (GPIO4/5)
+BAUD = 420000                 # fixed by ELRS / Betaflight CRSF
+
+# --------------------------------------------------------------------------
+# CRSF protocol
+# --------------------------------------------------------------------------
+CRSF_SYNC = 0xC8
+TYPE_RC_CHANNELS = 0x16
+TYPE_LINK_STATS = 0x14
+
+CRSF_MIN = 172
+CRSF_MID = 992
+CRSF_MAX = 1811
+
+# --------------------------------------------------------------------------
+# Channel map - AETR, confirmed on this airframe
+#   CH1 Roll  CH2 Pitch  CH3 Throttle  CH4 Yaw
+#   CH5 Aux1  CH6 Aux2   CH7 Aux3      CH8 Aux4
+#   CH9 Aux5  CH10 Aux6
+# Indices below are ZERO-BASED: channels[0] is CH1.
+# --------------------------------------------------------------------------
+CH_ROLL = 0
+CH_PITCH = 1
+CH_THROTTLE = 2
+CH_YAW = 3
+CH_AUX1 = 4    # repurposed as the arm channel - see ARM_CH_MIN below;
+               # only ever forced high by us when the ARMED latch fires,
+               # never a raw passthrough of the pilot's switch
+CH_AUX2 = 5
+CH_AUX3 = 6
+CH_AUX4 = 7    # repurposed as the GPS-rescue trigger - see RESCUE_CH_MIN below;
+               # only ever forced high by us once GPS_RESCUE latches,
+               # never a raw passthrough of the pilot's switch
+CH_AUX5 = 8    # repurposed as the detection-lock switch - see LOCK_CH_MIN below;
+               # never forwarded to the FC (controller.py neutralises it)
+CH_AUX6 = 9    # repurposed as the camera zoom control - see ZOOM_MIN/MAX below;
+               # never forwarded to the FC (controller.py neutralises it)
+
+CH_NAMES = ["Roll", "Pitch", "Thr", "Yaw",
+            "Aux1", "Aux2", "Aux3", "Aux4",
+            "Aux5", "Aux6",
+            "CH11", "CH12", "CH13", "CH14", "CH15", "CH16"]
+
+# --------------------------------------------------------------------------
+# Control
+# --------------------------------------------------------------------------
+AI_ENABLE_CH = CH_AUX2        # switch that permits any AI output at all
+AI_ENABLE_MIN = 1300          # must exceed this for AI to act
+
+MAX_AUTHORITY = 150           # max counts AI may add to a stick
+KP = 260.0                    # proportional gain (counts per unit error)
+KD = 90.0                     # derivative gain - required for stability
+DEADZONE = 0.06               # normalised error below which nothing is done
+VISION_TIMEOUT = 0.25         # s; stale vision data is discarded
+RC_TIMEOUT = 0.5              # s; no RC frames in this window means the receiver is gone
+RATE_ALPHA = 0.35             # EMA smoothing on the derivative term
+
+ROLL_SIGN = +1                # flip if corrections push the wrong way
+PITCH_SIGN = +1
+
+# --------------------------------------------------------------------------
+# Vision
+# --------------------------------------------------------------------------
+MODEL = "/usr/share/imx500-models/imx500_network_nanodet_plus_416x416_pp.rpk"
+TARGET_CLASS = 0
+THRESHOLD = 0.5
+MAX_DETECTIONS = 10
+MAIN_SIZE = (640, 480)
+HFLIP = 1
+VFLIP = 1
+MATCH_RADIUS_FRAC = 0.45      # of frame width; max frame-to-frame jump
+
+ZOOM_MIN = 1.0                 # Aux6 low  -> no digital zoom (full FOV)
+ZOOM_MAX = 4.0                 # Aux6 high -> max digital zoom
+
+TARGET_BOX_FRAC = 0.5          # ARMED auto-zoom target: box height / frame height
+AUTO_ZOOM_DEADBAND = 0.10       # +/-10% (40-60%) counts as close enough, no correction
+AUTO_ZOOM_KP = 1.5              # proportional gain for the auto-zoom loop -
+                                # needs bench tuning like KP/KD above
+AUTO_ZOOM_MAX_STEP = 0.02       # max zoom-factor change per frame - slow ease
+                                # in/out, so it doesn't overshoot
+AUTO_ZOOM_EDGE_MARGIN_FRAC = 0.08   # if the box is within this fraction of any
+                                     # frame edge, hold zoom - the crop is always
+                                     # centred on the frame, so zooming further
+                                     # risks cropping the target out entirely
+
+LOCK_CH = CH_AUX5             # switch that locks onto the current detection
+LOCK_CH_MIN = 1300             # must exceed this to lock, mirrors AI_ENABLE_MIN
+
+ARM_CH = CH_AUX1              # switch that arms, but only edge-triggered
+ARM_CH_MIN = 1300              # must exceed this to count as "high"
+
+GPS_RESCUE_TIMEOUT = 5.0       # s of continuous SEARCHING (while ARMED) before
+                                # GPS_RESCUE triggers
+RESCUE_CH = CH_AUX4            # manual GPS-rescue override - unconditional,
+                                # level-triggered, no interlock required
+RESCUE_CH_MIN = 1300            # must exceed this to count as "high"
+
+# --------------------------------------------------------------------------
+# Display colours (BGR)
+# --------------------------------------------------------------------------
+GREEN = (0, 255, 0)
+ORANGE = (0, 165, 255)
+RED = (0, 0, 255)
+BLUE = (255, 0, 0)
+WHITE = (255, 255, 255)
+GRAY = (120, 120, 120)
+YELLOW = (0, 255, 255)
