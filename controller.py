@@ -7,10 +7,12 @@ returns a channel list. That makes it testable without hardware.
 
 import time
 
-from config import (AI_ENABLE_CH, AI_ENABLE_MIN, MAX_AUTHORITY, KP, KD,
-                    DEADZONE, VISION_TIMEOUT, ROLL_SIGN, PITCH_SIGN,
-                    CH_ROLL, CH_PITCH, CH_YAW, CH_AUX1, CH_AUX4, CH_AUX5,
-                    CH_AUX6, CRSF_MIN, CRSF_MID, CRSF_MAX)
+from config import (ROLL_KP, ROLL_KI, ROLL_KD, ROLL_I_MAX,
+                    PITCH_KP, PITCH_KI, PITCH_KD, PITCH_I_MAX,
+                    MAX_DEFLECTION, DEADZONE, VISION_TIMEOUT,
+                    ROLL_SIGN, PITCH_SIGN, CH_ROLL, CH_PITCH, CH_THROTTLE,
+                    CH_AUX1, CH_AUX4, CH_AUX5, CH_AUX6,
+                    CRSF_MIN, CRSF_MID, CRSF_MAX)
 from crsf_protocol import clamp_channel
 
 REPURPOSED_CHANNELS = (CH_AUX5, CH_AUX6)
@@ -20,39 +22,64 @@ def clamp(v, lo, hi):
     return max(lo, min(hi, v))
 
 
+class PID:
+    """Simple PID with anti-windup clamping on the integral term.
+
+    The derivative term takes an already-computed rate (see
+    tracker.ErrorTracker) rather than differencing error itself, since
+    the rate is measured at the vision loop's cadence and smoothed
+    there - differencing again here, at the bridge thread's much
+    higher call rate, would just amplify noise.
+    """
+
+    def __init__(self, kp, ki, kd, i_max):
+        self.kp, self.ki, self.kd = kp, ki, kd
+        self.i_max = i_max
+        self._integral = 0.0
+
+    def update(self, error, rate, dt):
+        self._integral = clamp(self._integral + error * dt,
+                               -self.i_max, self.i_max)
+        return self.kp * error + self.ki * self._integral + self.kd * rate
+
+    def reset(self):
+        self._integral = 0.0
+
+
 class TrackController:
     """
-    Adds a bounded correction to the pilot's stick input.
+    Full autonomous override, once ARMED.
 
-    The correction is ADDED to what the pilot is already commanding - it
-    never replaces it. The pilot can always override by moving the stick,
-    and can always cut the AI out entirely with the enable switch.
+    Unlike a bumper-correction design, this does NOT add a bounded
+    nudge on top of pilot input - once armed, the pilot's roll/pitch
+    sticks have zero effect. Two independently-tuned PID loops drive
+    roll/pitch directly toward the locked target (TargetState, fed by
+    tracker.ErrorTracker), and throttle is forced to CRSF_MAX. Yaw and
+    all channels not explicitly handled here pass straight through.
+
+    There is no manual "AI enable" channel - ARMED (tracker.ArmLatch,
+    itself gated by LOCKED-first, see main_ai.py) is the sole gate, and
+    once armed there is no software path back to manual roll/pitch
+    control short of restarting the script.
     """
 
-    def __init__(self, target_state, arm_state, rescue_state, horiz_axis="roll"):
+    def __init__(self, target_state, arm_state, rescue_state):
         self.target = target_state
         self.arm_state = arm_state
         self.rescue_state = rescue_state
-        self.horiz_idx = CH_YAW if horiz_axis == "yaw" else CH_ROLL
+        self.roll_pid = PID(ROLL_KP, ROLL_KI, ROLL_KD, ROLL_I_MAX)
+        self.pitch_pid = PID(PITCH_KP, PITCH_KI, PITCH_KD, PITCH_I_MAX)
+        self._prev_t = time.monotonic()
 
     def apply(self, channels):
-        """
-        Returns the (possibly modified) channel list.
-
-        Four gates, all of which must pass:
-          1. pilot's enable switch is high
-          2. vision data is fresh
-          3. a target is locked
-          4. output is clamped to MAX_AUTHORITY
-        """
+        """Returns the (possibly modified) channel list."""
         self.target.ai_engaged = False
         self.target.last_horiz_corr = 0
         self.target.last_vert_corr = 0
 
         # Aux5 (detection lock) and Aux6 (camera zoom) are repurposed as
         # Pi-side controls (see vision.py / tracker.py / main_ai.py) and
-        # must never reach the FC - neutralise them unconditionally,
-        # regardless of the gates below.
+        # must never reach the FC - neutralise them unconditionally.
         for aux_ch in REPURPOSED_CHANNELS:
             if len(channels) > aux_ch:
                 channels[aux_ch] = CRSF_MID
@@ -62,8 +89,9 @@ class TrackController:
         # or not. The output is entirely decided by the ARMED latch
         # (tracker.ArmLatch, driven from main_ai.py, which requires the
         # LOCKED-first interlock): high only while armed, low otherwise.
+        armed = self.arm_state.get()
         if len(channels) > CH_AUX1:
-            channels[CH_AUX1] = CRSF_MAX if self.arm_state.get() else CRSF_MIN
+            channels[CH_AUX1] = CRSF_MAX if armed else CRSF_MIN
 
         # Aux4/CH8 is the GPS-rescue channel forwarded to the FC - same
         # treatment as CH5: fully decided by the software latch
@@ -72,47 +100,57 @@ class TrackController:
         if len(channels) > CH_AUX4:
             channels[CH_AUX4] = CRSF_MAX if self.rescue_state.get() else CRSF_MIN
 
-        # Gate 1 - pilot's enable switch
-        if len(channels) <= AI_ENABLE_CH:
+        now = time.monotonic()
+        dt = max(now - self._prev_t, 1e-3)
+        self._prev_t = now
+
+        if not armed:
+            # Not armed - pilot has full manual control. Keep the PID
+            # integrators at zero so arming doesn't inherit stale windup
+            # from an old attempt.
+            self.roll_pid.reset()
+            self.pitch_pid.reset()
             return channels
-        if channels[AI_ENABLE_CH] < AI_ENABLE_MIN:
-            return channels
+
+        # ARMED: throttle forced to max, unconditionally - not gated on
+        # having a target, only on being armed at all.
+        if len(channels) > CH_THROTTLE:
+            channels[CH_THROTTLE] = CRSF_MAX
 
         ex, ey, ex_rate, ey_rate, locked, stamp = self.target.snapshot()
+        fresh = (now - stamp) <= VISION_TIMEOUT
 
-        # Gate 2 - freshness. A stalled vision loop must not hold a
-        # stale correction on the sticks.
-        if time.monotonic() - stamp > VISION_TIMEOUT:
+        if not locked or not fresh:
+            # Nothing to track right now (SEARCHING, or a stalled vision
+            # loop) - hold roll/pitch neutral rather than coast on a
+            # stale/absent error, and don't let the integral wind up
+            # against a signal that isn't there.
+            self.roll_pid.reset()
+            self.pitch_pid.reset()
+            if len(channels) > CH_ROLL:
+                channels[CH_ROLL] = CRSF_MID
+            if len(channels) > CH_PITCH:
+                channels[CH_PITCH] = CRSF_MID
             return channels
 
-        # Gate 3 - a target actually exists
-        if not locked:
-            return channels
-
-        # PD. The derivative term is not optional: stick deflection commands
-        # acceleration, so proportional-only control on a position error
-        # behaves as a double integrator and will oscillate.
-        horiz = 0.0
-        vert = 0.0
+        roll_out = 0.0
         if abs(ex) > DEADZONE:
-            horiz = ROLL_SIGN * (KP * ex + KD * ex_rate)
+            roll_out = ROLL_SIGN * self.roll_pid.update(ex, ex_rate, dt)
+        pitch_out = 0.0
         if abs(ey) > DEADZONE:
-            vert = PITCH_SIGN * (KP * ey + KD * ey_rate)
+            pitch_out = PITCH_SIGN * self.pitch_pid.update(ey, ey_rate, dt)
 
-        # Gate 4 - hard authority limit
-        horiz = clamp(horiz, -MAX_AUTHORITY, MAX_AUTHORITY)
-        vert = clamp(vert, -MAX_AUTHORITY, MAX_AUTHORITY)
+        roll_out = clamp(roll_out, -MAX_DEFLECTION, MAX_DEFLECTION)
+        pitch_out = clamp(pitch_out, -MAX_DEFLECTION, MAX_DEFLECTION)
 
-        channels[self.horiz_idx] = clamp_channel(
-            channels[self.horiz_idx] + horiz)
-        channels[CH_PITCH] = clamp_channel(channels[CH_PITCH] + vert)
-
-        # Throttle and remaining aux channels pass through untouched
-        # (Aux1, Aux4, Aux5 and Aux6 were already handled above).
+        # Full override - NOT added to pilot input. The remote's
+        # roll/pitch sticks have zero effect from here on.
+        channels[CH_ROLL] = clamp_channel(CRSF_MID + roll_out)
+        channels[CH_PITCH] = clamp_channel(CRSF_MID + pitch_out)
 
         self.target.ai_engaged = True
-        self.target.last_horiz_corr = int(horiz)
-        self.target.last_vert_corr = int(vert)
+        self.target.last_horiz_corr = int(roll_out)
+        self.target.last_vert_corr = int(pitch_out)
         return channels
 
 

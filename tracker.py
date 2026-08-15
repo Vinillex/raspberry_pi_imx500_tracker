@@ -130,6 +130,54 @@ class Tracker:
         self.target.invalidate()
 
 
+class ErrorTracker:
+    """Normalised horizontal/vertical error (and smoothed rate) of a
+    box's centre from the frame centre - the signal the PID controllers
+    in controller.py drive roll/pitch from, via TargetState.
+
+    No camera imports - pure box geometry, testable with synthetic data.
+    """
+
+    def __init__(self, size=MAIN_SIZE):
+        self.cx = size[0] / 2.0
+        self.cy = size[1] / 2.0
+        self._prev_ex = 0.0
+        self._prev_ey = 0.0
+        self._ex_rate = 0.0
+        self._ey_rate = 0.0
+        self._prev_t = time.monotonic()
+
+    def update(self, box, now=None):
+        """box is (x, y, w, h) or None. Returns (ex, ey, ex_rate, ey_rate),
+        or None if box is None - nothing to track, so the caller should
+        hold neutral rather than coast on a stale error. Resets the
+        smoothed rate whenever box is None, so a re-acquired target
+        doesn't start with a derivative spike from the gap."""
+        if now is None:
+            now = time.monotonic()
+
+        if box is None:
+            self._prev_ex = self._prev_ey = 0.0
+            self._ex_rate = self._ey_rate = 0.0
+            self._prev_t = now
+            return None
+
+        dt = max(now - self._prev_t, 1e-3)
+        self._prev_t = now
+
+        cx, cy = box_center(box)
+        ex = (cx - self.cx) / self.cx
+        ey = (cy - self.cy) / self.cy
+
+        raw_ex_rate = (ex - self._prev_ex) / dt
+        raw_ey_rate = (ey - self._prev_ey) / dt
+        self._ex_rate = (1 - RATE_ALPHA) * self._ex_rate + RATE_ALPHA * raw_ex_rate
+        self._ey_rate = (1 - RATE_ALPHA) * self._ey_rate + RATE_ALPHA * raw_ey_rate
+        self._prev_ex, self._prev_ey = ex, ey
+
+        return ex, ey, self._ex_rate, self._ey_rate
+
+
 class AuxLock:
     """Confidence-based auto-lock, driven by a switch instead of a keyboard.
 

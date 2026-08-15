@@ -18,7 +18,7 @@ locked yet, so the controller never has a target to correct toward.
 import argparse
 import time
 
-from config import (PORT_UP, PORT_DOWN, BAUD, AI_ENABLE_CH, CH_AUX6,
+from config import (PORT_UP, PORT_DOWN, BAUD, CH_AUX6,
                     RC_TIMEOUT, ZOOM_MIN, ZOOM_MAX, LOCK_CH, LOCK_CH_MIN,
                     ARM_CH, ARM_CH_MIN, RESCUE_CH, RESCUE_CH_MIN,
                     GREEN, ORANGE, RED, BLUE)
@@ -26,7 +26,7 @@ from crsf_protocol import crsf_to_range
 from state import TargetState, ChannelState, ArmState, RescueState
 from bridge import CrsfBridge
 from controller import TrackController
-from tracker import AuxLock, ArmLatch, GpsRescueLatch
+from tracker import AuxLock, ArmLatch, GpsRescueLatch, ErrorTracker
 from vision import auto_zoom_factor
 
 
@@ -49,18 +49,20 @@ def main():
                         on_channels=channel_state.publish)
     bridge.start()
     print(f"Bridge: {args.up} -> {args.down} @ {args.baud}")
-    print(f"AI enable: CH{AI_ENABLE_CH + 1}")
 
     # Camera imports happen inside vision.Camera, so a missing camera
     # fails here rather than at module import time.
     from vision import Camera
     camera = Camera()
     aux_lock = AuxLock(size=camera.size)
+    error_tracker = ErrorTracker(size=camera.size)
     arm_latch = ArmLatch()
     gps_latch = GpsRescueLatch()
     armed = False            # sticky once True; see tracker.ArmLatch
     zoom = ZOOM_MIN           # current zoom factor; Aux6-driven until armed,
                               # then auto_zoom_factor() takes over
+    fps = 0.0
+    prev_t = time.monotonic()
 
     if not args.no_display:
         import overlay
@@ -71,6 +73,11 @@ def main():
         while True:
             frame, metadata = camera.capture()
             detections = camera.detections(metadata)
+
+            now = time.monotonic()
+            dt = max(now - prev_t, 1e-3)
+            prev_t = now
+            fps = 0.9 * fps + 0.1 * (1.0 / dt)
 
             input_ch, output_ch, stamp = channel_state.snapshot()
             fresh = input_ch is not None and time.monotonic() - stamp <= RC_TIMEOUT
@@ -96,6 +103,16 @@ def main():
             track_enabled = lock_on or armed
             locked_box = aux_lock.update(detections, track_enabled)
             is_locked = lock_on and locked_box is not None
+
+            # Feed the box position into TargetState so controller.py's
+            # PID loops (which run on the bridge thread) have something
+            # to drive roll/pitch from once armed. No box -> invalidate,
+            # so a stalled/absent target can't hold a stale correction.
+            err = error_tracker.update(locked_box)
+            if err is not None:
+                target.publish(*err)
+            else:
+                target.invalidate()
 
             # Aux1 -> arm, but only an edge that happens while already
             # locked AND Aux4 is low counts (see tracker.ArmLatch). Once
@@ -171,7 +188,7 @@ def main():
 
             overlay.draw(frame, box, box_color, text, box_color,
                         (input_ch, output_ch, stamp), countdown=countdown,
-                        error_lines=error_lines)
+                        error_lines=error_lines, fps=fps)
             overlay.show(frame)
 
     except KeyboardInterrupt:

@@ -14,16 +14,17 @@ import time
 
 import cv2
 
-from config import WHITE, RED, RC_TIMEOUT, CH_NAMES, CH_AUX6
+from config import WHITE, RED, GREEN, RC_TIMEOUT, CH_NAMES, CH_AUX6
 
 FONT = cv2.FONT_HERSHEY_SIMPLEX
 N_SHOWN = CH_AUX6 + 1   # CH1-10 (AETR + Aux1-6); CH11-16 not shown
 
 
 def draw(frame, box, box_color, status_text, status_color, channel_snapshot,
-        countdown=None, error_lines=None):
+        countdown=None, error_lines=None, fps=None):
     """Draw the subject box, status text, CRSF channel readout and (if
-    given) the GPS-rescue countdown and blocking-state labels, in place.
+    given) the GPS-rescue countdown, blocking-state labels and frame
+    rate, in place.
 
     box            - (x, y, w, h) or None
     channel_snapshot - whatever ChannelState.snapshot() returned:
@@ -33,6 +34,7 @@ def draw(frame, box, box_color, status_text, status_color, channel_snapshot,
     error_lines    - list of labels (e.g. ["ARMED", "GPS RESCUE"]) to
                       stack at right-centre, one per line; None/empty
                       to hide
+    fps            - current frame rate, or None to hide it
     """
     if box is not None:
         x, y, w, h = box
@@ -41,6 +43,7 @@ def draw(frame, box, box_color, status_text, status_color, channel_snapshot,
     _draw_status(frame, status_text, status_color)
     _draw_countdown(frame, countdown)
     _draw_error(frame, error_lines)
+    _draw_fps(frame, fps)
     _draw_channels(frame, channel_snapshot)
     return frame
 
@@ -70,6 +73,12 @@ def _draw_error(frame, lines):
         (tw, th), _ = cv2.getTextSize(line, FONT, 0.55, 2)
         cv2.putText(frame, line, (w - tw - 10, y), FONT, 0.55, RED, 2)
         y += th + 14
+
+
+def _draw_fps(frame, fps):
+    if fps is None:
+        return
+    cv2.putText(frame, f"{fps:.0f}", (10, 26), FONT, 0.7, GREEN, 2)
 
 
 def _draw_channels(frame, channel_snapshot):

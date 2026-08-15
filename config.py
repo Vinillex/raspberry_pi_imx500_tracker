@@ -55,20 +55,32 @@ CH_NAMES = ["Roll", "Pitch", "Thr", "Yaw",
             "CH11", "CH12", "CH13", "CH14", "CH15", "CH16"]
 
 # --------------------------------------------------------------------------
-# Control
+# Control - once ARMED, roll/pitch are FULLY overridden (not added to
+# pilot input - the pilot's sticks have zero effect on those two axes)
+# by two independently-tuned PID loops, and throttle is forced to max.
+# See controller.py. There is no manual enable channel any more: ARMED
+# alone is the gate.
 # --------------------------------------------------------------------------
-AI_ENABLE_CH = CH_AUX2        # switch that permits any AI output at all
-AI_ENABLE_MIN = 1300          # must exceed this for AI to act
+MAX_DEFLECTION = 700           # max counts roll/pitch may sit away from
+                                # CRSF_MID once armed (hard output clamp)
 
-MAX_AUTHORITY = 150           # max counts AI may add to a stick
-KP = 260.0                    # proportional gain (counts per unit error)
-KD = 90.0                     # derivative gain - required for stability
-DEADZONE = 0.06               # normalised error below which nothing is done
-VISION_TIMEOUT = 0.25         # s; stale vision data is discarded
-RC_TIMEOUT = 0.5              # s; no RC frames in this window means the receiver is gone
-RATE_ALPHA = 0.35             # EMA smoothing on the derivative term
+ROLL_KP = 260.0                 # proportional gain (counts per unit error)
+ROLL_KI = 0.0                   # integral gain - starts at 0, windup-prone,
+                                 # needs careful bench tuning
+ROLL_KD = 90.0                  # derivative gain - required for stability
+ROLL_I_MAX = 200.0              # anti-windup clamp on the integral accumulator
 
-ROLL_SIGN = +1                # flip if corrections push the wrong way
+PITCH_KP = 260.0
+PITCH_KI = 0.0
+PITCH_KD = 90.0
+PITCH_I_MAX = 200.0
+
+DEADZONE = 0.06                # normalised error below which nothing is done
+VISION_TIMEOUT = 0.25          # s; stale/absent target error is discarded
+RC_TIMEOUT = 0.5               # s; no RC frames in this window means the receiver is gone
+RATE_ALPHA = 0.35              # EMA smoothing on the derivative term
+
+ROLL_SIGN = +1                 # flip if corrections push the wrong way
 PITCH_SIGN = +1
 
 # --------------------------------------------------------------------------
