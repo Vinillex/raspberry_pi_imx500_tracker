@@ -88,13 +88,17 @@ none of their raw values ever reach the FC unmodified.
 - **Armed and actively tracking** (a fresh, locked target, not in GPS rescue):
   roll/pitch are **fully replaced** by two independently-tuned PID loops
   (not added to the pilot's stick input — the sticks have zero effect on
-  those two axes), clamped to ±`MAX_DEFLECTION`. Throttle is forced to
-  `THROTTLE_ARMED` (max).
-- **Armed, SEARCHING** (target lost): roll/pitch go neutral, throttle drops
-  to `THROTTLE_SEARCHING` (80%).
-- **GPS_RESCUE** (latched): roll/pitch go neutral, throttle centres, so the
-  FC's own GPS Rescue flight mode (engaged via Aux4/CH8) can take over
-  navigation.
+  those two axes), clamped to ±`MAX_DEFLECTION`.
+- **Armed, SEARCHING** (target lost): roll/pitch go neutral.
+- **GPS_RESCUE** (latched): roll/pitch go neutral, so the FC's own GPS
+  Rescue flight mode (engaged via Aux4/CH8) can take over navigation.
+
+**Throttle is currently left as a raw pilot passthrough in every state** —
+armed or not, tracking, searching, or rescued. This is a deliberate,
+temporary simplification while the arm/interlock logic itself is being
+bench-verified: arming should not also have to fight Betaflight's
+throttle-based arming checks (`min_check`) at the same time. The pilot
+controls throttle manually via the stick throughout.
 
 Arming requires a target to already be `LOCKED` (via Aux5/`AuxLock`), then a
 low→high edge on Aux1 while still locked (`tracker.ArmLatch`). **Arming is a
@@ -108,17 +112,21 @@ is stopping the script (Ctrl+C).
 
 Props off, battery out, FC on USB. In Betaflight's Receiver tab:
 
-- Not armed → CH1/CH2/CH3 mirror the sticks exactly; CH5 (arm) and CH8
-  (rescue) sit low regardless of switch position; CH9/CH10 (lock/zoom)
-  always sit centred.
-- Lock onto a target (Aux5), then raise Aux1 → CH5 snaps high, CH3 jumps to
-  max, and CH1/CH2 stop following the sticks entirely, driven by the PID
-  instead. The correction should be *corrective* (step right, the bars
-  should move the way that re-centres you) — backwards means flip
-  `ROLL_SIGN` / `PITCH_SIGN` in `config.py`.
+- Not armed → CH1/CH2 mirror the sticks exactly; CH3 always mirrors the
+  throttle stick, in every state below too; CH5 (arm) and CH8 (rescue) sit
+  low regardless of switch position; CH9/CH10 (lock/zoom) always sit
+  centred.
+- Lock onto a target (Aux5), then raise Aux1 → CH5 snaps high, and CH1/CH2
+  stop following the sticks entirely, driven by the PID instead (CH3 keeps
+  following the throttle stick, unchanged). The correction should be
+  *corrective* (step right, the bars should move the way that re-centres
+  you) — backwards means flip `ROLL_SIGN` / `PITCH_SIGN` in `config.py`.
+- Keep throttle at idle on your own while testing this — the FC still
+  needs to see idle throttle to arm at all; this project just isn't the
+  one enforcing it right now.
 - This is a **one-way transition** — lowering Aux1, Aux5, or anything else
   will not undo it once armed.
-- Losing the target (SEARCHING) → CH1/CH2 recentre, CH3 drops to ~80%.
+- Losing the target (SEARCHING) → CH1/CH2 recentre.
 - 5s of continuous SEARCHING, or raising Aux4 while armed → GPS_RESCUE: CH8
-  snaps high, CH1/CH2/CH3 all centre.
+  snaps high, CH1/CH2 centre.
 - Ctrl+C the script → bars go to failsafe, never hold a stale correction.

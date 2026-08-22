@@ -14,8 +14,7 @@ import sys
 from controller import PID, TrackController
 from state import TargetState, ArmState, RescueState
 from config import (CH_ROLL, CH_PITCH, CH_THROTTLE, CH_AUX1, CH_AUX4,
-                    CH_AUX5, CH_AUX6, CRSF_MIN, CRSF_MID, CRSF_MAX,
-                    THROTTLE_ARMED, THROTTLE_SEARCHING)
+                    CH_AUX5, CH_AUX6, CRSF_MIN, CRSF_MID, CRSF_MAX)
 
 failures = []
 
@@ -93,10 +92,11 @@ out = c.apply(make_channels())
 check("Aux1 forced high once armed", out[CH_AUX1] == CRSF_MAX)
 check("roll neutral while searching", out[CH_ROLL] == CRSF_MID)
 check("pitch neutral while searching", out[CH_PITCH] == CRSF_MID)
-check("throttle drops to THROTTLE_SEARCHING (80%) while searching",
-     out[CH_THROTTLE] == THROTTLE_SEARCHING)
-check("pilot's roll/pitch/throttle stick values are fully ignored",
-     out[CH_ROLL] != 1700 and out[CH_PITCH] != 300 and out[CH_THROTTLE] != 500)
+check("throttle is left as a raw pilot passthrough while searching "
+     "(no throttle automation - arming is being isolated for testing)",
+     out[CH_THROTTLE] == 500)
+check("pilot's roll/pitch stick values are ignored, but throttle isn't",
+     out[CH_ROLL] != 1700 and out[CH_PITCH] != 300)
 
 
 print("\nTrackController - ARMED, actively tracking")
@@ -104,8 +104,8 @@ c, target, arm, rescue = new_controller()
 arm.set(True)
 target.publish(ex=0.5, ey=-0.3, ex_rate=0.0, ey_rate=0.0)
 out = c.apply(make_channels())
-check("throttle forced to THROTTLE_ARMED (max) while tracking",
-     out[CH_THROTTLE] == THROTTLE_ARMED)
+check("throttle stays a raw pilot passthrough while actively tracking too",
+     out[CH_THROTTLE] == 500)
 check("positive horizontal error pushes roll away from centre",
      out[CH_ROLL] != CRSF_MID)
 check("negative vertical error pushes pitch away from centre",
@@ -125,8 +125,8 @@ check("roll goes neutral despite a visible/locked target",
      out[CH_ROLL] == CRSF_MID)
 check("pitch goes neutral despite a visible/locked target",
      out[CH_PITCH] == CRSF_MID)
-check("throttle centres (not max, not reduced) so the FC's own GPS "
-     "Rescue mode can take over", out[CH_THROTTLE] == CRSF_MID)
+check("throttle is left as a raw pilot passthrough during GPS_RESCUE too",
+     out[CH_THROTTLE] == 500)
 
 
 print("\nTrackController - stale target counts as no target")
@@ -140,7 +140,7 @@ target.publish(ex=0.5, ey=-0.3, ex_rate=0.0, ey_rate=0.0)
 target._stamp -= (VISION_TIMEOUT + 1.0)
 out = c.apply(make_channels())
 check("stale target -> treated as SEARCHING, not tracked",
-     out[CH_ROLL] == CRSF_MID and out[CH_THROTTLE] == THROTTLE_SEARCHING)
+     out[CH_ROLL] == CRSF_MID and out[CH_THROTTLE] == 500)
 
 
 print()

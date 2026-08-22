@@ -72,6 +72,10 @@ CH_NAMES = ["Roll", "Pitch", "Thr", "Yaw",
 MAX_DEFLECTION = 700           # max counts roll/pitch may sit away from
                                 # CRSF_MID once armed (hard output clamp)
 
+# Currently UNUSED by controller.py - throttle is a raw pilot passthrough
+# in every state while arming itself is being bench-verified in isolation
+# (see TrackController's docstring). Kept here, not deleted, for when
+# throttle automation is reintroduced once arming is solid.
 THROTTLE_ARMED = CRSF_MAX                              # ARMED, actively tracking
 THROTTLE_SEARCHING = int(CRSF_MIN + 0.8 * (CRSF_MAX - CRSF_MIN))  # SEARCHING - 80%,
                                                         # no tracking

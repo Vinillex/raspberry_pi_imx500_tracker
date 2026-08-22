@@ -9,9 +9,8 @@ import time
 
 from config import (ROLL_KP, ROLL_KI, ROLL_KD, ROLL_I_MAX,
                     PITCH_KP, PITCH_KI, PITCH_KD, PITCH_I_MAX,
-                    MAX_DEFLECTION, THROTTLE_ARMED, THROTTLE_SEARCHING,
-                    DEADZONE, VISION_TIMEOUT,
-                    ROLL_SIGN, PITCH_SIGN, CH_ROLL, CH_PITCH, CH_THROTTLE,
+                    MAX_DEFLECTION, DEADZONE, VISION_TIMEOUT,
+                    ROLL_SIGN, PITCH_SIGN, CH_ROLL, CH_PITCH,
                     CH_AUX1, CH_AUX4, CH_AUX5, CH_AUX6,
                     CRSF_MIN, CRSF_MID, CRSF_MAX)
 from crsf_protocol import clamp_channel
@@ -60,19 +59,26 @@ class TrackController:
 
     Tracking - the PID roll/pitch override - runs exclusively in the
     ARMED state: armed AND a fresh, locked target. It does NOT run in
-    SEARCHING (armed, target lost - throttle drops to THROTTLE_SEARCHING,
-    roll/pitch go neutral) or GPS_RESCUE (rescue_state latched - roll/
-    pitch neutral and throttle to CRSF_MID, letting the FC's own GPS
-    Rescue flight mode, engaged via Aux4/CH8, take over navigation).
-    LOCKED/DETECTED/etc. are pre-arm states and are already excluded by
-    the top-level `armed` gate.
+    SEARCHING (armed, target lost - roll/pitch go neutral) or
+    GPS_RESCUE (rescue_state latched - roll/pitch neutral, letting the
+    FC's own GPS Rescue flight mode, engaged via Aux4/CH8, take over
+    navigation). LOCKED/DETECTED/etc. are pre-arm states and are
+    already excluded by the top-level `armed` gate.
 
     Unlike a bumper-correction design, this does NOT add a bounded
     nudge on top of pilot input - whenever tracking is active, the
     pilot's roll/pitch sticks have zero effect. Two independently-tuned
     PID loops drive roll/pitch directly toward the locked target
-    (TargetState, fed by tracker.ErrorTracker). Yaw and all channels
-    not explicitly handled here pass straight through.
+    (TargetState, fed by tracker.ErrorTracker).
+
+    Throttle is deliberately left as a raw pilot passthrough in every
+    state (not armed, armed+tracking, SEARCHING, GPS_RESCUE) - the
+    pilot controls it manually via the stick at all times. This is a
+    temporary simplification while the arm/interlock logic itself is
+    being bench-verified: arming should not also be fighting
+    Betaflight's throttle-based arming checks (min_check) at the same
+    time. Yaw and all channels not explicitly handled here pass
+    straight through too.
 
     There is no manual "AI enable" channel - ARMED (tracker.ArmLatch,
     itself gated by LOCKED-first, see main_ai.py) is the sole top-level
@@ -132,23 +138,16 @@ class TrackController:
             # SEARCHING (no/stale target) or GPS_RESCUE - no tracking
             # either way. Hold roll/pitch neutral rather than coast on a
             # stale/absent error, and don't let the integral wind up
-            # against a signal that isn't there. Throttle: SEARCHING
-            # drops to THROTTLE_SEARCHING (80%); GPS_RESCUE goes to
-            # CRSF_MID - the FC's own GPS Rescue mode (engaged via
-            # Aux4/CH8) ignores RC throttle input anyway once active,
-            # and centre is the safer default if it isn't.
+            # against a signal that isn't there. Throttle is left alone
+            # (raw pilot passthrough) - see the class docstring.
             self.roll_pid.reset()
             self.pitch_pid.reset()
             _set_channel(channels, CH_ROLL, CRSF_MID)
             _set_channel(channels, CH_PITCH, CRSF_MID)
-            _set_channel(channels, CH_THROTTLE,
-                        CRSF_MID if rescue else THROTTLE_SEARCHING)
             return channels
 
-        # ARMED with a fresh, locked target, not in rescue - full
-        # throttle and active tracking.
-        _set_channel(channels, CH_THROTTLE, THROTTLE_ARMED)
-
+        # ARMED with a fresh, locked target, not in rescue - active
+        # tracking. Throttle is still left alone (raw pilot passthrough).
         roll_out = 0.0
         if abs(ex) > DEADZONE:
             roll_out = ROLL_SIGN * self.roll_pid.update(ex, ex_rate, dt)
