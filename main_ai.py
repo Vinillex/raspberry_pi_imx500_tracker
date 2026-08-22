@@ -140,7 +140,8 @@ def main():
     if not args.no_display:
         import overlay
 
-    print("Running. Ctrl+C to stop.\n")
+    quit_hint = "" if args.no_display else ", or focus the video window and press q/Esc"
+    print(f"Running. Ctrl+C to stop{quit_hint}.\n")
 
     try:
         while True:
@@ -210,7 +211,9 @@ def main():
             overlay.draw(frame, box, box_color, text, box_color,
                         (input_ch, output_ch, stamp), countdown=countdown,
                         error_lines=error_lines, fps=fps)
-            overlay.show(frame)
+            key = overlay.show(frame)
+            if key in (ord('q'), 27):   # 27 = Esc
+                break
 
     except KeyboardInterrupt:
         pass

@@ -107,10 +107,25 @@ def _draw_channels(frame, channel_snapshot):
     cv2.putText(frame, out_str, (10, h - 14), FONT, CHANNEL_SCALE, WHITE, 1)
 
 
+_window_ready = False
+
+
 def show(frame, window="rpi_ai"):
+    global _window_ready
+    if not _window_ready:
+        # WINDOW_NORMAL (resizable) is required before the fullscreen
+        # property will actually take effect - the default AUTOSIZE
+        # window cv2.imshow() would otherwise create ignores it.
+        cv2.namedWindow(window, cv2.WINDOW_NORMAL)
+        cv2.setWindowProperty(window, cv2.WND_PROP_FULLSCREEN,
+                              cv2.WINDOW_FULLSCREEN)
+        _window_ready = True
+
     cv2.imshow(window, frame)
     return cv2.waitKey(1) & 0xFF
 
 
 def destroy():
+    global _window_ready
     cv2.destroyAllWindows()
+    _window_ready = False
