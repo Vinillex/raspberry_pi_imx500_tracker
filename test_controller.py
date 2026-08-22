@@ -71,7 +71,7 @@ check("pilot has full manual control on roll/pitch/throttle",
      out[CH_ROLL] == 1700 and out[CH_PITCH] == 300 and out[CH_THROTTLE] == 500)
 check("Aux5 neutralised even when not armed", out[CH_AUX5] == CRSF_MID)
 check("Aux6 neutralised even when not armed", out[CH_AUX6] == CRSF_MID)
-check("Aux1 forced low (not a raw passthrough) when not armed",
+check("Aux1 forced low (not a raw passthrough) when not armed and not locked",
      out[CH_AUX1] == CRSF_MIN)
 check("Aux4 forced low when not in rescue", out[CH_AUX4] == CRSF_MIN)
 
@@ -83,6 +83,37 @@ ch_high_aux[CH_AUX4] = CRSF_MAX
 out = c.apply(ch_high_aux)
 check("raw Aux1=high input is ignored while not armed", out[CH_AUX1] == CRSF_MIN)
 check("raw Aux4=high input is ignored while not in rescue", out[CH_AUX4] == CRSF_MIN)
+
+
+print("\nTrackController - CH5 mirrors LOCKED live, before ARMED")
+c, target, arm, rescue = new_controller()
+target.publish(ex=0.1, ey=0.1, ex_rate=0.0, ey_rate=0.0)   # LOCKED, not armed
+out = c.apply(make_channels())
+check("CH5 goes high on LOCKED alone, with no arm switch involved at all",
+     out[CH_AUX1] == CRSF_MAX)
+check("pilot still has full manual roll/pitch/throttle - LOCKED alone "
+     "doesn't engage tracking, only CH5 changes",
+     out[CH_ROLL] == 1700 and out[CH_PITCH] == 300 and out[CH_THROTTLE] == 500)
+
+target.invalidate()   # lock lost - unlike ARMED, this is NOT one-way
+out = c.apply(make_channels())
+check("CH5 drops back low the instant LOCKED is lost, pre-arm",
+     out[CH_AUX1] == CRSF_MIN)
+
+target.publish(ex=0.1, ey=0.1, ex_rate=0.0, ey_rate=0.0)   # re-lock
+out = c.apply(make_channels())
+check("CH5 goes back high on re-lock - freely retestable, unlike ARMED",
+     out[CH_AUX1] == CRSF_MAX)
+
+target.invalidate()
+arm.set(True)   # now actually armed, with no lock at the moment it fires
+out = c.apply(make_channels())
+check("CH5 stays high once ARMED, even though LOCKED is false right now",
+     out[CH_AUX1] == CRSF_MAX)
+out = c.apply(make_channels())
+check("CH5 stays high on a later call with LOCKED still false - ARMED "
+     "is sticky regardless of LOCKED afterward",
+     out[CH_AUX1] == CRSF_MAX)
 
 
 print("\nTrackController - ARMED, SEARCHING (no target)")

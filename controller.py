@@ -84,6 +84,13 @@ class TrackController:
     itself gated by LOCKED-first, see main_ai.py) is the sole top-level
     gate, and once armed there is no software path back to manual
     roll/pitch control short of restarting the script.
+
+    CH5 (the arm channel forwarded to the FC) is high whenever ARMED OR
+    LOCKED - see the CH5 comment in apply(). This is a bench-testing
+    convenience: LOCKED (Aux5) is freely toggleable, unlike ARMED, so it
+    gives a CH5 signal you can raise/lower repeatedly without restarting
+    the script. It also means the FC gets an arm request the moment a
+    lock is acquired, not only on the pilot's own Aux1 edge.
     """
 
     def __init__(self, target_state, arm_state, rescue_state):
@@ -102,13 +109,26 @@ class TrackController:
         for aux_ch in REPURPOSED_CHANNELS:
             _set_channel(channels, aux_ch, CRSF_MID)
 
-        # Aux1/CH5 is the arm channel forwarded to the FC - it has NO
-        # direct connection to the pilot's raw Aux1 value at all, armed
-        # or not. The output is entirely decided by the ARMED latch
-        # (tracker.ArmLatch, driven from main_ai.py, which requires the
-        # LOCKED-first interlock): high only while armed, low otherwise.
         armed = self.arm_state.get()
-        _set_channel(channels, CH_AUX1, CRSF_MAX if armed else CRSF_MIN)
+        now = time.monotonic()
+        ex, ey, ex_rate, ey_rate, locked, stamp = self.target.snapshot()
+        fresh = (now - stamp) <= VISION_TIMEOUT
+        is_locked_now = locked and fresh
+
+        # Aux1/CH5 is the arm channel forwarded to the FC - it has NO
+        # direct connection to the pilot's raw Aux1 value at all. Before
+        # ARMED, CH5 mirrors LOCKED live: high whenever a target is
+        # currently locked (Aux5) with a fresh measurement, low the
+        # instant it isn't - a bench-testing aid, since unlike ARMED,
+        # LOCKED isn't a one-way latch, so toggling Aux5 gives a freely
+        # retestable CH5 signal without restarting the script. NOTE: this
+        # means the FC receives an arm request as soon as a lock is
+        # acquired, independent of the pilot's own Aux1 switch position.
+        # Once ARMED fires (tracker.ArmLatch, one-way, requires an Aux1
+        # edge while already locked - see main_ai.py), CH5 stays high
+        # forever regardless of LOCKED afterward, same as before.
+        _set_channel(channels, CH_AUX1,
+                    CRSF_MAX if (armed or is_locked_now) else CRSF_MIN)
 
         # Aux4/CH8 is the GPS-rescue channel forwarded to the FC - same
         # treatment as CH5: fully decided by the software latch
@@ -117,22 +137,20 @@ class TrackController:
         _set_channel(channels, CH_AUX4,
                     CRSF_MAX if self.rescue_state.get() else CRSF_MIN)
 
-        now = time.monotonic()
         dt = max(now - self._prev_t, 1e-3)
         self._prev_t = now
 
         if not armed:
-            # Not armed - pilot has full manual control. Keep the PID
-            # integrators at zero so arming doesn't inherit stale windup
-            # from an old attempt.
+            # Not armed - pilot has full manual control of roll/pitch/
+            # throttle (CH5 above may still be high, if LOCKED). Keep the
+            # PID integrators at zero so arming doesn't inherit stale
+            # windup from an old attempt.
             self.roll_pid.reset()
             self.pitch_pid.reset()
             return channels
 
         rescue = self.rescue_state.get()
-        ex, ey, ex_rate, ey_rate, locked, stamp = self.target.snapshot()
-        fresh = (now - stamp) <= VISION_TIMEOUT
-        tracking = locked and fresh and not rescue
+        tracking = is_locked_now and not rescue
 
         if not tracking:
             # SEARCHING (no/stale target) or GPS_RESCUE - no tracking

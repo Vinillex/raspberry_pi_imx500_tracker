@@ -82,8 +82,18 @@ none of their raw values ever reach the FC unmodified.
 
 - Aux5/Aux6 (lock/zoom) are always neutralised — never forwarded to the FC.
 - Aux1 (arm) and Aux4 (GPS rescue) are never a raw passthrough of the pilot's
-  switch — their output is entirely decided by `tracker.ArmLatch` /
-  `tracker.GpsRescueLatch`.
+  switch.
+- **CH5 (Aux1) is high whenever ARMED *or* LOCKED**, not only once actually
+  armed. Before arming, CH5 mirrors `LOCKED` live: high while a target is
+  currently locked (Aux5) with a fresh measurement, low the instant it isn't
+  — a bench-testing convenience, since unlike `ArmLatch`, `AuxLock`'s lock
+  isn't a one-way latch, so toggling Aux5 gives a freely retestable CH5
+  signal without restarting the script. **This means the FC receives an arm
+  request the moment a lock is acquired, independent of the pilot's own
+  Aux1 switch position.** Once `ArmLatch` actually fires (see below), CH5
+  stays high forever regardless of `LOCKED` afterward.
+- Aux4 (GPS rescue) output is entirely decided by `tracker.GpsRescueLatch` —
+  always a clean latch, no interaction with LOCKED.
 - **Not armed:** the pilot has full manual control of every channel.
 - **Armed and actively tracking** (a fresh, locked target, not in GPS rescue):
   roll/pitch are **fully replaced** by two independently-tuned PID loops
@@ -100,32 +110,52 @@ bench-verified: arming should not also have to fight Betaflight's
 throttle-based arming checks (`min_check`) at the same time. The pilot
 controls throttle manually via the stick throughout.
 
-Arming requires a target to already be `LOCKED` (via Aux5/`AuxLock`), then a
-low→high edge on Aux1 while still locked (`tracker.ArmLatch`). **Arming is a
-one-way latch** — nothing in software disarms it once triggered, not Aux1
-dropping, not losing the lock. GPS_RESCUE is the same: it latches
-permanently on either 5s of continuous SEARCHING or Aux4 going high while
-armed, and nothing clears it afterward. The only way back to manual control
-is stopping the script (Ctrl+C).
+Arming (the actual `armed` software state that gates PID tracking) requires
+a target to already be `LOCKED` (via Aux5/`AuxLock`), then a low→high edge
+on the **pilot's own** Aux1 input while still locked (`tracker.ArmLatch`) —
+this software-side detection reads the pilot's raw switch directly and is
+unaffected by whatever CH5 currently outputs to the FC. But because CH5
+already mirrors LOCKED (above), in the normal lock-then-arm sequence CH5
+was typically already high by the time this official edge fires — so the
+FC's *actual* arm attempt, and any refusal, most likely already happened
+earlier, the moment the lock was acquired, not at this later software
+event. **Arming is a one-way latch** — nothing in software disarms it once
+triggered, not Aux1 dropping, not losing the lock. GPS_RESCUE is the same:
+it latches permanently on either 5s of continuous SEARCHING or Aux4 going
+high while armed, and nothing clears it afterward. The only way back to
+manual control is stopping the script (Ctrl+C).
 
 ## Bench test before flying
 
-Props off, battery out, FC on USB. In Betaflight's Receiver tab:
+Props off. **Power the FC from the battery, not USB** — confirmed on this
+exact setup: a live USB/Configurator connection blocks arming outright
+(the `MSP` arming-disable flag), independent of anything this project does.
+Verify arming by ear/eye (motor beep, status LED) or a radio telemetry
+screen, not by watching Betaflight's Receiver tab live.
 
-- Not armed → CH1/CH2 mirror the sticks exactly; CH3 always mirrors the
-  throttle stick, in every state below too; CH5 (arm) and CH8 (rescue) sit
-  low regardless of switch position; CH9/CH10 (lock/zoom) always sit
-  centred.
-- Lock onto a target (Aux5), then raise Aux1 → CH5 snaps high, and CH1/CH2
-  stop following the sticks entirely, driven by the PID instead (CH3 keeps
-  following the throttle stick, unchanged). The correction should be
-  *corrective* (step right, the bars should move the way that re-centres
-  you) — backwards means flip `ROLL_SIGN` / `PITCH_SIGN` in `config.py`.
+- Not armed, nothing locked → CH1/CH2 mirror the sticks exactly; CH3 always
+  mirrors the throttle stick, in every state below too; CH5 (arm) sits low;
+  CH8 (rescue) sits low regardless of switch position; CH9/CH10 (lock/zoom)
+  always sit centred.
+- Lock onto a target (Aux5) → **CH5 goes high immediately, before you've
+  touched Aux1 at all.** This is deliberate (see Safety gates above) — the
+  FC will attempt to arm right here if throttle is at idle and nothing else
+  blocks it. Lose the lock → CH5 drops back low; this part is freely
+  repeatable, not one-way.
+- With the target still locked, raise Aux1 → the *software* records an
+  official arm (`armed` latches true, gates PID tracking), but CH5 itself
+  may show no new transition on the wire, since it was likely already high
+  from the lock. CH1/CH2 stop following the sticks entirely, driven by the
+  PID instead (CH3 keeps following the throttle stick, unchanged). The
+  correction should be *corrective* (step right, the bars should move the
+  way that re-centres you) — backwards means flip `ROLL_SIGN` / `PITCH_SIGN`
+  in `config.py`.
 - Keep throttle at idle on your own while testing this — the FC still
   needs to see idle throttle to arm at all; this project just isn't the
   one enforcing it right now.
-- This is a **one-way transition** — lowering Aux1, Aux5, or anything else
-  will not undo it once armed.
+- Once `armed` latches, CH5 stays high for good — this part **is** a
+  **one-way transition**: lowering Aux1, Aux5, or anything else will not
+  undo it.
 - Losing the target (SEARCHING) → CH1/CH2 recentre.
 - 5s of continuous SEARCHING, or raising Aux4 while armed → GPS_RESCUE: CH8
   snaps high, CH1/CH2 centre.

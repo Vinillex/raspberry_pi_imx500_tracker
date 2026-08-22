@@ -45,8 +45,9 @@ CH_PITCH = 1
 CH_THROTTLE = 2
 CH_YAW = 3
 CH_AUX1 = 4    # repurposed as the arm channel - see ARM_CH_MIN below;
-               # only ever forced high by us when the ARMED latch fires,
-               # never a raw passthrough of the pilot's switch
+               # forced high once ARMED latches, OR live while LOCKED
+               # (Aux5) pre-arm - see TrackController.apply(); never a
+               # raw passthrough of the pilot's switch
 CH_AUX2 = 5
 CH_AUX3 = 6
 CH_AUX4 = 7    # repurposed as the GPS-rescue trigger - see RESCUE_CH_MIN below;
