@@ -10,7 +10,10 @@ Wires the modules together:
 The bridge runs on background threads; the vision loop owns the main
 thread. Aux5 locks onto a detection, Aux1 arms (edge-triggered, requires
 LOCKED first, one-way), and controller.py takes over roll/pitch/throttle
-entirely once armed - see README.md's "Safety gates" section.
+entirely once armed - see README.md's "Safety gates" section. For bench
+testing, lowering Aux1 while ARMED/GPS_RESCUE triggers DISABLED - a
+one-way kill switch (tracker.DisableLatch) that forces CH5/CH8 low and
+stops everything else, for the rest of the run.
 
     python3 main_ai.py
     python3 main_ai.py --no-display
@@ -22,12 +25,12 @@ import time
 from config import (PORT_UP, PORT_DOWN, BAUD, CH_AUX6, FPS_ALPHA,
                     RC_TIMEOUT, ZOOM_MIN, ZOOM_MAX, LOCK_CH, LOCK_CH_MIN,
                     ARM_CH, ARM_CH_MIN, RESCUE_CH, RESCUE_CH_MIN,
-                    GREEN, ORANGE, RED, BLUE)
+                    GREEN, ORANGE, RED, BLUE, BLACK)
 from crsf_protocol import crsf_to_range
-from state import TargetState, ChannelState, ArmState, RescueState
+from state import TargetState, ChannelState, ArmState, RescueState, DisableState
 from bridge import CrsfBridge
 from controller import TrackController
-from tracker import AuxLock, ArmLatch, GpsRescueLatch, ErrorTracker
+from tracker import AuxLock, ArmLatch, GpsRescueLatch, DisableLatch, ErrorTracker
 from vision import auto_zoom_factor
 
 
@@ -74,17 +77,23 @@ def resolve_zoom(armed, fresh, input_ch, locked_box, camera, zoom):
     return zoom
 
 
-def select_overlay_state(gps_rescue, armed, locked_box, lock_on, is_locked, detections):
+def select_overlay_state(disabled, gps_rescue, armed, locked_box, lock_on,
+                        is_locked, detections):
     """Decide what the overlay should show this frame, in priority
-    order: GPS_RESCUE (terminal - once latched, stays shown forever
-    regardless of what armed/locked_box do afterward) > ARMED/SEARCHING
-    (object left the frame -> drop the box rather than hold a stale
-    one; resumes ARMED the instant it's matched again, since aux_lock
-    keeps trying every frame) > LOCKED/NO OBJECT DETECTED ("LOCKED"
-    only while the object is actually matched this frame) > DETECTING/
+    order: DISABLED (terminal - bench-test kill switch, tracker.
+    DisableLatch, overrides everything else forever once triggered) >
+    GPS_RESCUE (terminal - once latched, stays shown forever regardless
+    of what armed/locked_box do afterward) > ARMED/SEARCHING (object
+    left the frame -> drop the box rather than hold a stale one;
+    resumes ARMED the instant it's matched again, since aux_lock keeps
+    trying every frame) > LOCKED/NO OBJECT DETECTED ("LOCKED" only
+    while the object is actually matched this frame) > DETECTING/
     DETECTED.
 
     Returns (box, box_color, text)."""
+    if disabled:
+        return None, BLACK, "DISABLED"
+
     if gps_rescue:
         return None, BLUE, "GPS RESCUE"
 
@@ -114,7 +123,8 @@ def main():
     target = TargetState()
     arm_state = ArmState()
     rescue_state = RescueState()
-    controller = TrackController(target, arm_state, rescue_state)
+    disable_state = DisableState()
+    controller = TrackController(target, arm_state, rescue_state, disable_state)
     channel_state = ChannelState()
 
     # Serial first - if the ports fail we should not start the camera.
@@ -131,6 +141,7 @@ def main():
     error_tracker = ErrorTracker(size=camera.size)
     arm_latch = ArmLatch()
     gps_latch = GpsRescueLatch()
+    disable_latch = DisableLatch()
     armed = False            # sticky once True; see tracker.ArmLatch
     zoom = ZOOM_MIN           # current zoom factor; Aux6-driven until armed,
                               # then auto_zoom_factor() takes over
@@ -188,6 +199,13 @@ def main():
             gps_rescue, countdown = gps_latch.update(searching, aux4_high and armed)
             rescue_state.set(gps_rescue)
 
+            # Aux1 low while ARMED/GPS_RESCUE -> DISABLED: a deliberate
+            # bench-test kill switch (see tracker.DisableLatch). One-way,
+            # terminal - once this fires, nothing else in this loop or in
+            # controller.py has any further effect for the rest of this run.
+            disabled = disable_latch.update(aux1_high, armed or gps_rescue)
+            disable_state.set(disabled)
+
             # Blocking-state labels, right of centre - only relevant
             # before arming; once armed the main status text covers it.
             error_lines = []
@@ -200,10 +218,15 @@ def main():
                 elif is_locked and aux4_high:
                     error_lines.append("GPS RESCUE")
 
+            if disabled:
+                countdown = None
+                error_lines = []
+
             zoom = resolve_zoom(armed, fresh, input_ch, locked_box, camera, zoom)
 
             box, box_color, text = select_overlay_state(
-                gps_rescue, armed, locked_box, lock_on, is_locked, detections)
+                disabled, gps_rescue, armed, locked_box, lock_on, is_locked,
+                detections)
 
             if args.no_display:
                 continue

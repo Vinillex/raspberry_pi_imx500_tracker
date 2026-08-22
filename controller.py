@@ -91,12 +91,19 @@ class TrackController:
     gives a CH5 signal you can raise/lower repeatedly without restarting
     the script. It also means the FC gets an arm request the moment a
     lock is acquired, not only on the pilot's own Aux1 edge.
+
+    DISABLED (tracker.DisableLatch, one-way, bench-testing kill switch -
+    triggers when Aux1 reads low while ARMED/GPS_RESCUE) overrides all of
+    the above: CH5/CH8 are forced low and nothing else in apply() runs,
+    for the rest of this run.
     """
 
-    def __init__(self, target_state, arm_state, rescue_state):
+    def __init__(self, target_state, arm_state, rescue_state,
+                disable_state=None):
         self.target = target_state
         self.arm_state = arm_state
         self.rescue_state = rescue_state
+        self.disable_state = disable_state
         self.roll_pid = PID(ROLL_KP, ROLL_KI, ROLL_KD, ROLL_I_MAX)
         self.pitch_pid = PID(PITCH_KP, PITCH_KI, PITCH_KD, PITCH_I_MAX)
         self._prev_t = time.monotonic()
@@ -108,6 +115,21 @@ class TrackController:
         # must never reach the FC - neutralise them unconditionally.
         for aux_ch in REPURPOSED_CHANNELS:
             _set_channel(channels, aux_ch, CRSF_MID)
+
+        # DISABLED - bench-test kill switch (tracker.DisableLatch, one-way,
+        # driven from main_ai.py once Aux1 reads low while ARMED or
+        # GPS_RESCUE). Overrides everything below: CH5/CH8 forced low
+        # (disarms the FC) and nothing else in this function runs from
+        # here on - full pilot passthrough on roll/pitch/throttle, exactly
+        # like "not armed". disable_state=None (not wired up) means this
+        # never triggers, same as if the feature didn't exist. Nothing
+        # clears this short of restarting main_ai.py.
+        if self.disable_state is not None and self.disable_state.get():
+            _set_channel(channels, CH_AUX1, CRSF_MIN)
+            _set_channel(channels, CH_AUX4, CRSF_MIN)
+            self.roll_pid.reset()
+            self.pitch_pid.reset()
+            return channels
 
         armed = self.arm_state.get()
         now = time.monotonic()

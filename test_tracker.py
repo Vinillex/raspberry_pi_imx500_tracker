@@ -9,7 +9,7 @@ with synthetic data; this is that test.
 
 import sys
 
-from tracker import AuxLock, ArmLatch, GpsRescueLatch, ErrorTracker
+from tracker import AuxLock, ArmLatch, GpsRescueLatch, DisableLatch, ErrorTracker
 
 failures = []
 
@@ -119,6 +119,28 @@ check("stays triggered even if aux4_high goes False",
      gps3.update(searching=False, aux4_high=False, now=1.0)[0] is True)
 check("stays triggered even if the object reappears (searching=False)",
      gps3.update(searching=False, aux4_high=False, now=2.0)[0] is True)
+
+
+print("\nDisableLatch")
+# Aux1 low while not armed/rescue -> no effect at all (this is normal
+# pre-arm state, not an abort request)
+dis = DisableLatch()
+check("aux1 low, not armed -> not disabled", dis.update(False, False) is False)
+check("aux1 high, not armed -> still not disabled", dis.update(True, False) is False)
+
+# Aux1 low while ARMED -> triggers
+dis2 = DisableLatch()
+check("aux1 high while armed -> not disabled yet", dis2.update(True, True) is False)
+check("aux1 drops while armed -> DISABLED", dis2.update(False, True) is True)
+check("stays disabled even if aux1 raised again",
+     dis2.update(True, True) is True)
+check("stays disabled even if armed_or_rescue later goes False",
+     dis2.update(True, False) is True)
+
+# Aux1 low while GPS_RESCUE (armed_or_rescue covers both) -> triggers
+dis3 = DisableLatch()
+check("aux1 low during GPS_RESCUE -> DISABLED",
+     dis3.update(False, True) is True)   # caller passes armed or rescue
 
 
 print("\nErrorTracker")

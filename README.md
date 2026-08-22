@@ -23,9 +23,9 @@ Known-bad: **GPIO0** (pin 27) — low-side driver damaged, never use as UART TX.
 |---|---|---|
 | `config.py` | every tunable constant, channel map | no |
 | `crsf_protocol.py` | CRC, pack/unpack, frame parsing | no |
-| `state.py` | `TargetState`, `ChannelState`, `ArmState`, `RescueState` (all thread-safe), `Stats` | no |
+| `state.py` | `TargetState`, `ChannelState`, `ArmState`, `RescueState`, `DisableState` (all thread-safe), `Stats` | no |
 | `controller.py` | PID control law + safety gates | no |
-| `tracker.py` | `AuxLock` (detection lock), `ArmLatch`, `GpsRescueLatch`, `ErrorTracker` (error + rate) | no |
+| `tracker.py` | `AuxLock` (detection lock), `ArmLatch`, `GpsRescueLatch`, `DisableLatch`, `ErrorTracker` (error + rate) | no |
 | `vision.py` | IMX500 / picamera2 wrapper, auto-zoom | camera |
 | `bridge.py` | serial ports and forwarding threads | serial |
 | `overlay.py` | all OpenCV drawing | cv2 |
@@ -122,8 +122,25 @@ earlier, the moment the lock was acquired, not at this later software
 event. **Arming is a one-way latch** — nothing in software disarms it once
 triggered, not Aux1 dropping, not losing the lock. GPS_RESCUE is the same:
 it latches permanently on either 5s of continuous SEARCHING or Aux4 going
-high while armed, and nothing clears it afterward. The only way back to
-manual control is stopping the script (Ctrl+C).
+high while armed, and nothing clears it afterward. Short of stopping the
+script (Ctrl+C), the only way back to manual control is the DISABLED kill
+switch below.
+
+### DISABLED — a bench-testing kill switch
+
+Lowering Aux1 while ARMED or in GPS_RESCUE triggers **DISABLED**
+(`tracker.DisableLatch`): CH5 and CH8 are forced low — disarming the FC —
+and `TrackController.apply()` stops doing anything else at all for the rest
+of the run, overriding ARMED/GPS_RESCUE/LOCKED and everything downstream of
+them. The overlay shows **DISABLED** in black, with no box, countdown, or
+blocking-state labels. Like every other latch here, **DISABLED is one-way**
+— raising Aux1 again does nothing; only restarting `main_ai.py` clears it.
+
+This exists purely for bench testing (an actual, deliberate abort switch,
+as opposed to `ArmLatch`'s intentional refusal to disarm on an accidental
+blip), and is separate from `disable_state` simply not being wired up
+(`TrackController(..., disable_state=None)`, the default) — in that case
+DISABLED can never trigger at all, identical to before this existed.
 
 ## Bench test before flying
 
@@ -159,4 +176,8 @@ screen, not by watching Betaflight's Receiver tab live.
 - Losing the target (SEARCHING) → CH1/CH2 recentre.
 - 5s of continuous SEARCHING, or raising Aux4 while armed → GPS_RESCUE: CH8
   snaps high, CH1/CH2 centre.
+- Lower Aux1 while ARMED or GPS_RESCUE → **DISABLED**: CH5 and CH8 both snap
+  low (this actually disarms the FC), overlay shows "DISABLED" in black, no
+  box. This is also a **one-way transition** — raising Aux1 again does not
+  undo it; only restarting the script does.
 - Ctrl+C the script → bars go to failsafe, never hold a stale correction.

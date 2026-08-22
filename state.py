@@ -105,6 +105,15 @@ class RescueState(_BoolFlag):
     """
 
 
+class DisableState(_BoolFlag):
+    """Thread-safe boolean flag for the DISABLED kill-switch latch.
+
+    The vision/main thread calls set() whenever tracker.DisableLatch's
+    decision changes. The bridge thread calls get() every RC frame to
+    decide whether to force CH5/CH8 low and stop driving anything else.
+    """
+
+
 class Stats:
     """Frame counters. Integer increments are atomic enough for display."""
 

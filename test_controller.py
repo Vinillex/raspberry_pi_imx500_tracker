@@ -12,7 +12,7 @@ single most safety-critical logic in the project.
 import sys
 
 from controller import PID, TrackController
-from state import TargetState, ArmState, RescueState
+from state import TargetState, ArmState, RescueState, DisableState
 from config import (CH_ROLL, CH_PITCH, CH_THROTTLE, CH_AUX1, CH_AUX4,
                     CH_AUX5, CH_AUX6, CRSF_MIN, CRSF_MID, CRSF_MAX)
 
@@ -57,11 +57,18 @@ pid3.reset()
 check("reset() zeroes the integral", pid3._integral == 0.0)
 
 
-def new_controller():
+def new_controller(with_disable=False):
+    """with_disable=False matches the constructor's own default
+    (disable_state=None) - the "kill switch not wired up" case, which
+    must mean DISABLED can never trigger. with_disable=True additionally
+    returns the DisableState so a test can simulate main_ai.py's
+    tracker.DisableLatch firing."""
     target = TargetState()
     arm = ArmState()
     rescue = RescueState()
-    return TrackController(target, arm, rescue), target, arm, rescue
+    disable = DisableState() if with_disable else None
+    c = TrackController(target, arm, rescue, disable)
+    return (c, target, arm, rescue, disable) if with_disable else (c, target, arm, rescue)
 
 
 print("\nTrackController - not armed")
@@ -158,6 +165,40 @@ check("pitch goes neutral despite a visible/locked target",
      out[CH_PITCH] == CRSF_MID)
 check("throttle is left as a raw pilot passthrough during GPS_RESCUE too",
      out[CH_THROTTLE] == 500)
+
+
+print("\nTrackController - DISABLED (bench-test kill switch)")
+c, target, arm, rescue, disable = new_controller(with_disable=True)
+arm.set(True)
+rescue.set(True)
+target.publish(ex=0.5, ey=-0.3, ex_rate=0.0, ey_rate=0.0)   # strong error
+disable.set(True)   # simulates tracker.DisableLatch firing in main_ai.py
+out = c.apply(make_channels())
+check("CH5 forced low once DISABLED, despite ARMED being true",
+     out[CH_AUX1] == CRSF_MIN)
+check("CH8 forced low once DISABLED, despite rescue being true",
+     out[CH_AUX4] == CRSF_MIN)
+check("Aux5/Aux6 still neutralised while DISABLED",
+     out[CH_AUX5] == CRSF_MID and out[CH_AUX6] == CRSF_MID)
+check("roll/pitch/throttle are full pilot passthrough once DISABLED, "
+     "even with a strong locked-target error and ARMED/rescue both true",
+     out[CH_ROLL] == 1700 and out[CH_PITCH] == 300 and out[CH_THROTTLE] == 500)
+
+# Nothing reverses it - not lowering arm/rescue, not a fresh target error.
+arm.set(False)
+rescue.set(False)
+out = c.apply(make_channels())
+check("DISABLED persists even if arm_state/rescue_state later go False - "
+     "the kill switch does not depend on them once latched",
+     out[CH_AUX1] == CRSF_MIN and out[CH_AUX4] == CRSF_MIN)
+
+print("\nTrackController - disable_state=None means DISABLED can never fire")
+c, target, arm, rescue = new_controller()   # disable_state=None, the default
+arm.set(True)
+target.publish(ex=0.5, ey=-0.3, ex_rate=0.0, ey_rate=0.0)
+out = c.apply(make_channels())
+check("armed+tracking behaves exactly as if the kill switch didn't exist",
+     out[CH_AUX1] == CRSF_MAX and out[CH_ROLL] != CRSF_MID)
 
 
 print("\nTrackController - stale target counts as no target")

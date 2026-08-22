@@ -189,3 +189,32 @@ class GpsRescueLatch:
                 self._searching_since = None
 
         return self._triggered, remaining
+
+
+class DisableLatch:
+    """One-way "kill switch" latch, for bench testing.
+
+    Triggers permanently (for the rest of this run) the moment Aux1
+    reads low while the drone is currently ARMED or in GPS_RESCUE -
+    lowering the arm switch on purpose, after having already armed, is
+    treated as a deliberate abort request rather than an accidental
+    blip (ArmLatch already ignores Aux1 dropping for exactly that
+    reason). Since GPS_RESCUE can only ever happen while already ARMED,
+    checking `armed` alone covers both cases - the caller may still
+    pass `armed or rescue` for clarity.
+
+    Once triggered, nothing clears it - not raising Aux1 again, not
+    anything else. Mirrors ArmLatch/GpsRescueLatch's one-way design,
+    but drives the opposite outcome: controller.py forces CH5 (and
+    CH8) low and stops driving anything else once this is set. Only
+    recreating this object (i.e. restarting main_ai.py) resets it.
+    """
+
+    def __init__(self):
+        self._disabled = False
+
+    def update(self, aux1_high, armed_or_rescue):
+        """Returns the current DISABLED state."""
+        if not self._disabled and armed_or_rescue and not aux1_high:
+            self._disabled = True
+        return self._disabled
