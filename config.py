@@ -109,8 +109,8 @@ TARGET_CLASS = 0
 THRESHOLD = 0.5
 MAX_DETECTIONS = 10
 MAIN_SIZE = (640, 480)
-HFLIP = 1
-VFLIP = 1
+HFLIP = 0
+VFLIP = 0
 MATCH_RADIUS_FRAC = 0.45      # of frame width; max frame-to-frame jump
 
 ZOOM_MIN = 1.0                 # Aux6 low  -> no digital zoom (full FOV)
