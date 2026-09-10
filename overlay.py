@@ -19,7 +19,7 @@ from config import WHITE, RED, GREEN, RC_TIMEOUT, CH_NAMES, CH_AUX6
 FONT = cv2.FONT_HERSHEY_SIMPLEX
 N_SHOWN = CH_AUX6 + 1   # CH1-10 (AETR + Aux1-6); CH11-16 not shown
 
-STATUS_SCALE = 0.7      # top-centre status text, top-right countdown, FPS
+STATUS_SCALE = 0.7      # top-centre status text, FPS
 LABEL_SCALE = 0.55      # right-centre blocking-state labels
 CHANNEL_SCALE = 0.45    # bottom channel readout
 STALE_SCALE = 0.5       # "RX: NA"
@@ -27,19 +27,15 @@ TEXT_MARGIN = 10        # px from the frame edge for right-aligned text
 
 
 def draw(frame, box, box_color, status_text, status_color, channel_snapshot,
-        countdown=None, error_lines=None, fps=None):
+        error_lines=None, fps=None):
     """Draw the subject box, status text, CRSF channel readout and (if
-    given) the GPS-rescue countdown, blocking-state labels and frame
-    rate, in place.
+    given) the blocking-state labels and frame rate, in place.
 
     box            - (x, y, w, h) or None
     channel_snapshot - whatever ChannelState.snapshot() returned:
                         (input_channels, output_channels, stamp)
-    countdown      - seconds remaining before GPS_RESCUE triggers, or
-                      None to hide it
-    error_lines    - list of labels (e.g. ["ARMED", "GPS RESCUE"]) to
-                      stack at right-centre, one per line; None/empty
-                      to hide
+    error_lines    - list of labels (e.g. ["ARMED"]) to stack at
+                      right-centre, one per line; None/empty to hide
     fps            - current frame rate, or None to hide it
     """
     if box is not None:
@@ -47,7 +43,6 @@ def draw(frame, box, box_color, status_text, status_color, channel_snapshot,
         cv2.rectangle(frame, (x, y), (x + w, y + h), box_color, 2)
 
     _draw_status(frame, status_text, status_color)
-    _draw_countdown(frame, countdown)
     _draw_error(frame, error_lines)
     _draw_fps(frame, fps)
     _draw_channels(frame, channel_snapshot)
@@ -67,12 +62,6 @@ def _text(frame, text, y, color, scale=STATUS_SCALE, align="center", thickness=2
 
 def _draw_status(frame, text, color):
     _text(frame, text, 30, color)
-
-
-def _draw_countdown(frame, countdown):
-    if countdown is None:
-        return
-    _text(frame, f"{countdown:.1f}", 30, RED, align="right")
 
 
 def _draw_error(frame, lines):

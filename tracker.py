@@ -1,5 +1,5 @@
 """
-Detection lock, arm/rescue latches, and target error tracking.
+Detection lock, arm/disable latches, and target error tracking.
 
 Takes detections, maintains which one is locked, computes the normalised
 image error and its rate, and publishes to TargetState.
@@ -10,7 +10,7 @@ tested with synthetic data.
 
 import time
 
-from config import MAIN_SIZE, MATCH_RADIUS_FRAC, RATE_ALPHA, GPS_RESCUE_TIMEOUT
+from config import MAIN_SIZE, MATCH_RADIUS_FRAC, RATE_ALPHA
 from vision import box_center, nearest_idx
 
 
@@ -139,82 +139,27 @@ class ArmLatch:
         return self._armed
 
 
-class GpsRescueLatch:
-    """One-way latch for the GPS-rescue failsafe.
-
-    Triggers permanently (for the rest of this run) on either:
-      - continuous SEARCHING (ARMED with no locked box) for
-        `timeout` seconds without returning to ARMED, or
-      - `aux4_high` being True when passed in - the caller (main_ai.py)
-        only sets this while already ARMED, so the manual trigger has no
-        effect before arming; the timeout path above is the only one
-        that can fire pre-arm-adjacent state.
-
-    Once triggered, nothing clears it - not aux4_high going False, not
-    the object reappearing. Mirrors ArmLatch's one-way design.
-    """
-
-    def __init__(self, timeout=GPS_RESCUE_TIMEOUT):
-        self.timeout = timeout
-        self._triggered = False
-        self._searching_since = None
-
-    def update(self, searching, aux4_high, now=None):
-        """searching  - True while ARMED with no locked box this frame.
-        aux4_high  - manual override trigger; the caller decides when
-                     this counts (main_ai.py only passes True while
-                     already ARMED - see the class docstring).
-        now        - monotonic timestamp; defaults to time.monotonic().
-
-        Returns (triggered, remaining). `remaining` is the seconds left
-        on the searching countdown while it's running, else None (not
-        searching, or already triggered)."""
-        if now is None:
-            now = time.monotonic()
-
-        if aux4_high:
-            self._triggered = True
-
-        remaining = None
-        if not self._triggered:
-            if searching:
-                if self._searching_since is None:
-                    self._searching_since = now
-                elapsed = now - self._searching_since
-                if elapsed >= self.timeout:
-                    self._triggered = True
-                else:
-                    remaining = self.timeout - elapsed
-            else:
-                self._searching_since = None
-
-        return self._triggered, remaining
-
-
 class DisableLatch:
     """One-way "kill switch" latch, for bench testing.
 
     Triggers permanently (for the rest of this run) the moment Aux1
-    reads low while the drone is currently ARMED or in GPS_RESCUE -
-    lowering the arm switch on purpose, after having already armed, is
-    treated as a deliberate abort request rather than an accidental
-    blip (ArmLatch already ignores Aux1 dropping for exactly that
-    reason). Since GPS_RESCUE can only ever happen while already ARMED,
-    checking `armed` alone covers both cases - the caller may still
-    pass `armed or rescue` for clarity.
+    reads low while the drone is currently ARMED - lowering the arm
+    switch on purpose, after having already armed, is treated as a
+    deliberate abort request rather than an accidental blip (ArmLatch
+    already ignores Aux1 dropping for exactly that reason).
 
     Once triggered, nothing clears it - not raising Aux1 again, not
-    anything else. Mirrors ArmLatch/GpsRescueLatch's one-way design,
-    but drives the opposite outcome: controller.py forces CH5 (and
-    CH8) low and stops driving anything else once this is set. Only
-    recreating this object (i.e. restarting main_ai.py) resets it.
+    anything else. Mirrors ArmLatch's one-way design, but drives the
+    opposite outcome: controller.py forces CH5 low and stops driving
+    anything else once this is set. Only recreating this object (i.e.
+    restarting main_ai.py) resets it.
     """
 
     def __init__(self):
         self._disabled = False
 
-    def update(self, aux1_high, armed_or_rescue):
+    def update(self, aux1_high, armed):
         """Returns the current DISABLED state."""
-        if not self._disabled and armed_or_rescue and not aux1_high:
+        if not self._disabled and armed and not aux1_high:
             self._disabled = True
         return self._disabled

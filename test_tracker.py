@@ -9,7 +9,7 @@ with synthetic data; this is that test.
 
 import sys
 
-from tracker import AuxLock, ArmLatch, GpsRescueLatch, DisableLatch, ErrorTracker
+from tracker import AuxLock, ArmLatch, DisableLatch, ErrorTracker
 
 failures = []
 
@@ -88,42 +88,9 @@ check("raising aux1 again while locked -> NOW arms",
      latch2.update(True, True) is True)
 
 
-print("\nGpsRescueLatch")
-# Timeout path
-gps = GpsRescueLatch(timeout=5.0)
-t = 0.0
-for expected_remaining in (5.0, 4.0, 3.0, 2.0, 1.0):
-    triggered, remaining = gps.update(searching=True, aux4_high=False, now=t)
-    check(f"t={t}: not yet triggered, remaining~{expected_remaining}",
-         triggered is False and abs(remaining - expected_remaining) < 1e-9)
-    t += 1.0
-triggered, remaining = gps.update(searching=True, aux4_high=False, now=t)
-check("hits the timeout -> triggers", triggered is True and remaining is None)
-check("stays triggered afterward",
-     gps.update(searching=False, aux4_high=False, now=t + 1)[0] is True)
-
-# Returning to ARMED before the timeout resets the countdown
-gps2 = GpsRescueLatch(timeout=5.0)
-gps2.update(searching=True, aux4_high=False, now=0.0)
-gps2.update(searching=True, aux4_high=False, now=3.0)
-gps2.update(searching=False, aux4_high=False, now=4.0)   # back to ARMED
-triggered, remaining = gps2.update(searching=True, aux4_high=False, now=5.0)
-check("countdown restarts from the top after returning to ARMED",
-     triggered is False and abs(remaining - 5.0) < 1e-9)
-
-# Manual override: immediate, and permanent
-gps3 = GpsRescueLatch(timeout=5.0)
-triggered, remaining = gps3.update(searching=False, aux4_high=True, now=0.0)
-check("aux4_high triggers immediately", triggered is True and remaining is None)
-check("stays triggered even if aux4_high goes False",
-     gps3.update(searching=False, aux4_high=False, now=1.0)[0] is True)
-check("stays triggered even if the object reappears (searching=False)",
-     gps3.update(searching=False, aux4_high=False, now=2.0)[0] is True)
-
-
 print("\nDisableLatch")
-# Aux1 low while not armed/rescue -> no effect at all (this is normal
-# pre-arm state, not an abort request)
+# Aux1 low while not armed -> no effect at all (this is normal pre-arm
+# state, not an abort request)
 dis = DisableLatch()
 check("aux1 low, not armed -> not disabled", dis.update(False, False) is False)
 check("aux1 high, not armed -> still not disabled", dis.update(True, False) is False)
@@ -134,13 +101,8 @@ check("aux1 high while armed -> not disabled yet", dis2.update(True, True) is Fa
 check("aux1 drops while armed -> DISABLED", dis2.update(False, True) is True)
 check("stays disabled even if aux1 raised again",
      dis2.update(True, True) is True)
-check("stays disabled even if armed_or_rescue later goes False",
+check("stays disabled even if armed later goes False",
      dis2.update(True, False) is True)
-
-# Aux1 low while GPS_RESCUE (armed_or_rescue covers both) -> triggers
-dis3 = DisableLatch()
-check("aux1 low during GPS_RESCUE -> DISABLED",
-     dis3.update(False, True) is True)   # caller passes armed or rescue
 
 
 print("\nErrorTracker")

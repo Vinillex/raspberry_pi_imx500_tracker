@@ -48,11 +48,10 @@ CH_AUX1 = 4    # repurposed as the arm channel - see ARM_CH_MIN below;
                # forced high once ARMED latches, OR live while LOCKED
                # (Aux5) pre-arm - see TrackController.apply(); never a
                # raw passthrough of the pilot's switch
-CH_AUX2 = 5
-CH_AUX3 = 6
-CH_AUX4 = 7    # repurposed as the GPS-rescue trigger - see RESCUE_CH_MIN below;
-               # only ever forced high by us once GPS_RESCUE latches,
-               # never a raw passthrough of the pilot's switch
+CH_AUX2 = 5    # free channel - passes straight through to the FC
+CH_AUX3 = 6    # free channel - passes straight through to the FC
+CH_AUX4 = 7    # free channel - passes straight through to the FC (was the
+               # GPS-rescue trigger; that logic has been removed)
 CH_AUX5 = 8    # repurposed as the detection-lock switch - see LOCK_CH_MIN below;
                # never forwarded to the FC (controller.py neutralises it)
 CH_AUX6 = 9    # free channel - passes straight through to the FC (was the
@@ -65,10 +64,9 @@ CH_NAMES = ["Roll", "Pitch", "Thr", "Yaw",
 
 # --------------------------------------------------------------------------
 # Control - tracking (PID roll/pitch override) runs ONLY in the ARMED
-# state (armed + a fresh locked target) - never in SEARCHING or
-# GPS_RESCUE, even though both can only happen while armed=True. See
-# controller.py. There is no manual enable channel any more: ARMED
-# alone is the gate.
+# state (armed + a fresh locked target) - never in SEARCHING (armed,
+# target lost). See controller.py. There is no manual enable channel any
+# more: ARMED alone is the gate.
 # --------------------------------------------------------------------------
 MAX_DEFLECTION = 700           # max counts roll/pitch may sit away from
                                 # CRSF_MID once armed (hard output clamp)
@@ -118,14 +116,6 @@ LOCK_CH_MIN = 1300             # must be at or above this to lock
 
 ARM_CH = CH_AUX1              # switch that arms, but only edge-triggered
 ARM_CH_MIN = 1300              # must be at or above this to count as "high"
-
-GPS_RESCUE_TIMEOUT = 5.0       # s of continuous SEARCHING (while ARMED) before
-                                # GPS_RESCUE triggers
-RESCUE_CH = CH_AUX4            # manual GPS-rescue override - level-triggered,
-                                # but only takes effect while already ARMED
-                                # (see main_ai.py); the timeout path above is
-                                # the only trigger that works before arming
-RESCUE_CH_MIN = 1300            # must be at or above this to count as "high"
 
 # --------------------------------------------------------------------------
 # Display colours (BGR)

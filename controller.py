@@ -11,7 +11,7 @@ from config import (ROLL_KP, ROLL_KI, ROLL_KD, ROLL_I_MAX,
                     PITCH_KP, PITCH_KI, PITCH_KD, PITCH_I_MAX,
                     MAX_DEFLECTION, DEADZONE, VISION_TIMEOUT,
                     ROLL_SIGN, PITCH_SIGN, CH_ROLL, CH_PITCH,
-                    CH_AUX1, CH_AUX4, CH_AUX5,
+                    CH_AUX1, CH_AUX5,
                     CRSF_MIN, CRSF_MID, CRSF_MAX)
 from crsf_protocol import clamp_channel
 
@@ -62,11 +62,9 @@ class TrackController:
 
     Tracking - the PID roll/pitch override - runs exclusively in the
     ARMED state: armed AND a fresh, locked target. It does NOT run in
-    SEARCHING (armed, target lost - roll/pitch go neutral) or
-    GPS_RESCUE (rescue_state latched - roll/pitch neutral, letting the
-    FC's own GPS Rescue flight mode, engaged via Aux4/CH8, take over
-    navigation). LOCKED/DETECTED/etc. are pre-arm states and are
-    already excluded by the top-level `armed` gate.
+    SEARCHING (armed, target lost - roll/pitch go neutral).
+    LOCKED/DETECTED/etc. are pre-arm states and are already excluded by
+    the top-level `armed` gate.
 
     Unlike a bumper-correction design, this does NOT add a bounded
     nudge on top of pilot input - whenever tracking is active, the
@@ -75,12 +73,12 @@ class TrackController:
     (TargetState, fed by tracker.ErrorTracker).
 
     Throttle is deliberately left as a raw pilot passthrough in every
-    state (not armed, armed+tracking, SEARCHING, GPS_RESCUE) - the
-    pilot controls it manually via the stick at all times. This is a
-    temporary simplification while the arm/interlock logic itself is
-    being bench-verified: arming should not also be fighting
-    Betaflight's throttle-based arming checks (min_check) at the same
-    time. Yaw and all channels not explicitly handled here pass
+    state (not armed, armed+tracking, SEARCHING) - the pilot controls it
+    manually via the stick at all times. This is a temporary
+    simplification while the arm/interlock logic itself is being
+    bench-verified: arming should not also be fighting Betaflight's
+    throttle-based arming checks (min_check) at the same time. Yaw and
+    all channels not explicitly handled here (Aux2/Aux3/Aux4/Aux6) pass
     straight through too.
 
     There is no manual "AI enable" channel - ARMED (tracker.ArmLatch,
@@ -96,16 +94,14 @@ class TrackController:
     lock is acquired, not only on the pilot's own Aux1 edge.
 
     DISABLED (tracker.DisableLatch, one-way, bench-testing kill switch -
-    triggers when Aux1 reads low while ARMED/GPS_RESCUE) overrides all of
-    the above: CH5/CH8 are forced low and nothing else in apply() runs,
-    for the rest of this run.
+    triggers when Aux1 reads low while ARMED) overrides all of the above:
+    CH5 is forced low and nothing else in apply() runs, for the rest of
+    this run.
     """
 
-    def __init__(self, target_state, arm_state, rescue_state,
-                disable_state=None):
+    def __init__(self, target_state, arm_state, disable_state=None):
         self.target = target_state
         self.arm_state = arm_state
-        self.rescue_state = rescue_state
         self.disable_state = disable_state
         self.roll_pid = PID(ROLL_KP, ROLL_KI, ROLL_KD, ROLL_I_MAX)
         self.pitch_pid = PID(PITCH_KP, PITCH_KI, PITCH_KD, PITCH_I_MAX)
@@ -114,22 +110,21 @@ class TrackController:
     def apply(self, channels):
         """Returns the (possibly modified) channel list."""
         # Aux5 (detection lock) is a Pi-side control (see tracker.py /
-        # main_ai.py) and must never reach the FC - neutralise it. Aux6
-        # is no longer touched (zoom logic removed) and passes through.
+        # main_ai.py) and must never reach the FC - neutralise it.
+        # Aux2/Aux3/Aux4/Aux6 are free channels and pass straight through.
         for aux_ch in REPURPOSED_CHANNELS:
             _set_channel(channels, aux_ch, CRSF_MID)
 
         # DISABLED - bench-test kill switch (tracker.DisableLatch, one-way,
-        # driven from main_ai.py once Aux1 reads low while ARMED or
-        # GPS_RESCUE). Overrides everything below: CH5/CH8 forced low
-        # (disarms the FC) and nothing else in this function runs from
-        # here on - full pilot passthrough on roll/pitch/throttle, exactly
-        # like "not armed". disable_state=None (not wired up) means this
-        # never triggers, same as if the feature didn't exist. Nothing
-        # clears this short of restarting main_ai.py.
+        # driven from main_ai.py once Aux1 reads low while ARMED).
+        # Overrides everything below: CH5 forced low (disarms the FC) and
+        # nothing else in this function runs from here on - full pilot
+        # passthrough on roll/pitch/throttle, exactly like "not armed".
+        # disable_state=None (not wired up) means this never triggers,
+        # same as if the feature didn't exist. Nothing clears this short
+        # of restarting main_ai.py.
         if self.disable_state is not None and self.disable_state.get():
             _set_channel(channels, CH_AUX1, CRSF_MIN)
-            _set_channel(channels, CH_AUX4, CRSF_MIN)
             self.roll_pid.reset()
             self.pitch_pid.reset()
             return channels
@@ -155,13 +150,6 @@ class TrackController:
         _set_channel(channels, CH_AUX1,
                     CRSF_MAX if (armed or is_locked_now) else CRSF_MIN)
 
-        # Aux4/CH8 is the GPS-rescue channel forwarded to the FC - same
-        # treatment as CH5: fully decided by the software latch
-        # (tracker.GpsRescueLatch, driven from main_ai.py), never a raw
-        # passthrough of the pilot's Aux4 switch.
-        _set_channel(channels, CH_AUX4,
-                    CRSF_MAX if self.rescue_state.get() else CRSF_MIN)
-
         dt = max(now - self._prev_t, 1e-3)
         self._prev_t = now
 
@@ -174,23 +162,20 @@ class TrackController:
             self.pitch_pid.reset()
             return channels
 
-        rescue = self.rescue_state.get()
-        tracking = is_locked_now and not rescue
-
-        if not tracking:
-            # SEARCHING (no/stale target) or GPS_RESCUE - no tracking
-            # either way. Hold roll/pitch neutral rather than coast on a
-            # stale/absent error, and don't let the integral wind up
-            # against a signal that isn't there. Throttle is left alone
-            # (raw pilot passthrough) - see the class docstring.
+        if not is_locked_now:
+            # SEARCHING - armed with no fresh target. Hold roll/pitch
+            # neutral rather than coast on a stale/absent error, and
+            # don't let the integral wind up against a signal that isn't
+            # there. Throttle is left alone (raw pilot passthrough) - see
+            # the class docstring.
             self.roll_pid.reset()
             self.pitch_pid.reset()
             _set_channel(channels, CH_ROLL, CRSF_MID)
             _set_channel(channels, CH_PITCH, CRSF_MID)
             return channels
 
-        # ARMED with a fresh, locked target, not in rescue - active
-        # tracking. Throttle is still left alone (raw pilot passthrough).
+        # ARMED with a fresh, locked target - active tracking. Throttle
+        # is still left alone (raw pilot passthrough).
         roll_out = 0.0
         if abs(ex) > DEADZONE:
             roll_out = ROLL_SIGN * self.roll_pid.update(ex, ex_rate, dt)

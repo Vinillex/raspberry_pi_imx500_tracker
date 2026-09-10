@@ -72,7 +72,7 @@ class ChannelState:
 
 class _BoolFlag:
     """Thread-safe boolean flag - the shared shape behind ArmState and
-    RescueState below, which differ only in what the flag means."""
+    DisableState below, which differ only in what the flag means."""
 
     def __init__(self):
         self._lock = threading.Lock()
@@ -96,21 +96,12 @@ class ArmState(_BoolFlag):
     """
 
 
-class RescueState(_BoolFlag):
-    """Thread-safe boolean flag for the GPS-rescue latch.
-
-    The vision/main thread calls set() whenever tracker.GpsRescueLatch's
-    decision changes. The bridge thread calls get() every RC frame to
-    decide whether to force the rescue channel (CH8/Aux4) high.
-    """
-
-
 class DisableState(_BoolFlag):
     """Thread-safe boolean flag for the DISABLED kill-switch latch.
 
     The vision/main thread calls set() whenever tracker.DisableLatch's
     decision changes. The bridge thread calls get() every RC frame to
-    decide whether to force CH5/CH8 low and stop driving anything else.
+    decide whether to force CH5 low and stop driving anything else.
     """
 
 

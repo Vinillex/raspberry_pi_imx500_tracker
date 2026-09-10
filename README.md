@@ -23,9 +23,9 @@ Known-bad: **GPIO0** (pin 27) — low-side driver damaged, never use as UART TX.
 |---|---|---|
 | `config.py` | every tunable constant, channel map | no |
 | `crsf_protocol.py` | CRC, pack/unpack, frame parsing | no |
-| `state.py` | `TargetState`, `ChannelState`, `ArmState`, `RescueState`, `DisableState` (all thread-safe), `Stats` | no |
+| `state.py` | `TargetState`, `ChannelState`, `ArmState`, `DisableState` (all thread-safe), `Stats` | no |
 | `controller.py` | PID control law + safety gates | no |
-| `tracker.py` | `AuxLock` (detection lock), `ArmLatch`, `GpsRescueLatch`, `DisableLatch`, `ErrorTracker` (error + rate) | no |
+| `tracker.py` | `AuxLock` (detection lock), `ArmLatch`, `DisableLatch`, `ErrorTracker` (error + rate) | no |
 | `vision.py` | IMX500 / picamera2 wrapper, detection parsing | camera |
 | `bridge.py` | serial ports and forwarding threads | serial |
 | `overlay.py` | all OpenCV drawing | cv2 |
@@ -66,25 +66,27 @@ python3 main_ai.py --no-display     # headless
 | 2 | Pitch | 1 |
 | 3 | Throttle | 2 |
 | 4 | Yaw | 3 |
-| 5–8 | Aux1–4 | 4–7 |
-| 9–10 | Aux5–6 | 8–9 |
+| 5 | Aux1 (arm) | 4 |
+| 6–8 | Aux2–4 (free) | 5–7 |
+| 9 | Aux5 (lock) | 8 |
+| 10 | Aux6 (free) | 9 |
 
 All 16 channels are always decoded and re-encoded; `--show` only affects
 what gets printed.
 
-Aux5 (lock), Aux1 (arm) and Aux4 (GPS rescue) are repurposed as Pi-side
-controls — see `config.py`'s comments on each — and none of their raw
-values reach the FC unmodified. Aux6 is a free channel (was camera zoom;
-that logic has been removed) and passes straight through.
+Only **Aux1 (arm)** and **Aux5 (lock)** are repurposed as Pi-side controls
+— see `config.py`'s comments — and their raw values never reach the FC
+unmodified. **Aux2, Aux3, Aux4 and Aux6 are free channels** and pass
+straight through untouched (Aux4 was the GPS-rescue trigger and Aux6 the
+camera zoom; both features have been removed).
 
 ## Safety gates
 
 `TrackController.apply()` in `controller.py`:
 
-- Aux5 (lock) is always neutralised — never forwarded to the FC. Aux6
-  passes straight through (free channel).
-- Aux1 (arm) and Aux4 (GPS rescue) are never a raw passthrough of the pilot's
-  switch.
+- Aux5 (lock) is always neutralised — never forwarded to the FC.
+  Aux2/Aux3/Aux4/Aux6 pass straight through (free channels).
+- Aux1 (arm) is never a raw passthrough of the pilot's switch.
 - **CH5 (Aux1) is high whenever ARMED *or* LOCKED**, not only once actually
   armed. Before arming, CH5 mirrors `LOCKED` live: high while a target is
   currently locked (Aux5) with a fresh measurement, low the instant it isn't
@@ -94,23 +96,19 @@ that logic has been removed) and passes straight through.
   request the moment a lock is acquired, independent of the pilot's own
   Aux1 switch position.** Once `ArmLatch` actually fires (see below), CH5
   stays high forever regardless of `LOCKED` afterward.
-- Aux4 (GPS rescue) output is entirely decided by `tracker.GpsRescueLatch` —
-  always a clean latch, no interaction with LOCKED.
 - **Not armed:** the pilot has full manual control of every channel.
-- **Armed and actively tracking** (a fresh, locked target, not in GPS rescue):
+- **Armed and actively tracking** (a fresh, locked target):
   roll/pitch are **fully replaced** by two independently-tuned PID loops
   (not added to the pilot's stick input — the sticks have zero effect on
   those two axes), clamped to ±`MAX_DEFLECTION`.
 - **Armed, SEARCHING** (target lost): roll/pitch go neutral.
-- **GPS_RESCUE** (latched): roll/pitch go neutral, so the FC's own GPS
-  Rescue flight mode (engaged via Aux4/CH8) can take over navigation.
 
 **Throttle is currently left as a raw pilot passthrough in every state** —
-armed or not, tracking, searching, or rescued. This is a deliberate,
-temporary simplification while the arm/interlock logic itself is being
-bench-verified: arming should not also have to fight Betaflight's
-throttle-based arming checks (`min_check`) at the same time. The pilot
-controls throttle manually via the stick throughout.
+armed or not, tracking, searching. This is a deliberate, temporary
+simplification while the arm/interlock logic itself is being bench-verified:
+arming should not also have to fight Betaflight's throttle-based arming
+checks (`min_check`) at the same time. The pilot controls throttle manually
+via the stick throughout.
 
 Arming (the actual `armed` software state that gates PID tracking) requires
 a target to already be `LOCKED` (via Aux5/`AuxLock`), then a low→high edge
@@ -122,21 +120,19 @@ was typically already high by the time this official edge fires — so the
 FC's *actual* arm attempt, and any refusal, most likely already happened
 earlier, the moment the lock was acquired, not at this later software
 event. **Arming is a one-way latch** — nothing in software disarms it once
-triggered, not Aux1 dropping, not losing the lock. GPS_RESCUE is the same:
-it latches permanently on either 5s of continuous SEARCHING or Aux4 going
-high while armed, and nothing clears it afterward. Short of stopping the
+triggered, not Aux1 dropping, not losing the lock. Short of stopping the
 script (Ctrl+C), the only way back to manual control is the DISABLED kill
 switch below.
 
 ### DISABLED — a bench-testing kill switch
 
-Lowering Aux1 while ARMED or in GPS_RESCUE triggers **DISABLED**
-(`tracker.DisableLatch`): CH5 and CH8 are forced low — disarming the FC —
-and `TrackController.apply()` stops doing anything else at all for the rest
-of the run, overriding ARMED/GPS_RESCUE/LOCKED and everything downstream of
-them. The overlay shows **DISABLED** in black, with no box, countdown, or
-blocking-state labels. Like every other latch here, **DISABLED is one-way**
-— raising Aux1 again does nothing; only restarting `main_ai.py` clears it.
+Lowering Aux1 while ARMED triggers **DISABLED** (`tracker.DisableLatch`):
+CH5 is forced low — disarming the FC — and `TrackController.apply()` stops
+doing anything else at all for the rest of the run, overriding
+ARMED/LOCKED and everything downstream of them. The overlay shows
+**DISABLED** in black, with no box or blocking-state labels. Like every
+other latch here, **DISABLED is one-way** — raising Aux1 again does
+nothing; only restarting `main_ai.py` clears it.
 
 This exists purely for bench testing (an actual, deliberate abort switch,
 as opposed to `ArmLatch`'s intentional refusal to disarm on an accidental
@@ -154,8 +150,8 @@ screen, not by watching Betaflight's Receiver tab live.
 
 - Not armed, nothing locked → CH1/CH2 mirror the sticks exactly; CH3 always
   mirrors the throttle stick, in every state below too; CH5 (arm) sits low;
-  CH8 (rescue) sits low regardless of switch position; CH9 (lock) always
-  sits centred; CH10 (Aux6, free) passes straight through.
+  CH9 (lock) always sits centred; CH6/CH7/CH8/CH10 (Aux2/3/4/6, free) pass
+  straight through.
 - Lock onto a target (Aux5) → **CH5 goes high immediately, before you've
   touched Aux1 at all.** This is deliberate (see Safety gates above) — the
   FC will attempt to arm right here if throttle is at idle and nothing else
@@ -176,10 +172,8 @@ screen, not by watching Betaflight's Receiver tab live.
   **one-way transition**: lowering Aux1, Aux5, or anything else will not
   undo it.
 - Losing the target (SEARCHING) → CH1/CH2 recentre.
-- 5s of continuous SEARCHING, or raising Aux4 while armed → GPS_RESCUE: CH8
-  snaps high, CH1/CH2 centre.
-- Lower Aux1 while ARMED or GPS_RESCUE → **DISABLED**: CH5 and CH8 both snap
-  low (this actually disarms the FC), overlay shows "DISABLED" in black, no
-  box. This is also a **one-way transition** — raising Aux1 again does not
-  undo it; only restarting the script does.
+- Lower Aux1 while ARMED → **DISABLED**: CH5 snaps low (this actually
+  disarms the FC), overlay shows "DISABLED" in black, no box. This is also
+  a **one-way transition** — raising Aux1 again does not undo it; only
+  restarting the script does.
 - Ctrl+C the script → bars go to failsafe, never hold a stale correction.
