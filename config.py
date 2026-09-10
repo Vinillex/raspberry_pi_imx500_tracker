@@ -70,8 +70,9 @@ CH_NAMES = ["Roll", "Pitch", "Thr", "Yaw",
 # target lost). See controller.py. There is no manual enable channel any
 # more: ARMED alone is the gate.
 # --------------------------------------------------------------------------
-MAX_DEFLECTION = 700           # max counts roll/pitch may sit away from
-                                # CRSF_MID once armed (hard output clamp)
+MAX_DEFLECTION = CRSF_MAX - CRSF_MID   # 819 - roll/pitch PID output may use
+                                       # the full stick range once armed;
+                                       # clamp_channel still bounds the wire
 
 # Currently UNUSED by controller.py - throttle is a raw pilot passthrough
 # in every state while arming itself is being bench-verified in isolation
