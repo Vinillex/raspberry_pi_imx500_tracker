@@ -146,11 +146,11 @@ persist across arm/disarm cycles; restarting `main_ai.py` resets them.
 
 - **Aux5 will not lock until Aux6 is centred** — an interlock so a gain
   can't be ramping while you set up the lock/arm sequence. The overlay
-  shows `CENTER AUX6 TO LOCK` while the wheel is off centre.
+  shows `CENTER AUX6 TO LOCK` across the frame centre while the wheel is
+  off centre.
 - In the **DETECTING** state the overlay shows all six current gains
-  top-right (the selected one flagged `>` in yellow) and the selected
-  gain's name + value large at right-centre. Once locked or armed the
-  panel hides — disarm to read the new value.
+  top-right, the selected one flagged `>` in yellow (name + value). Once
+  locked or armed the panel hides — disarm to read the new value.
 
 Typical loop: pick the gain (Aux2/3/4) → centre Aux6 → raise Aux5 to lock
 → raise Aux1 to arm → scroll Aux6 while watching the tracking response →
@@ -168,7 +168,7 @@ screen, not by watching Betaflight's Receiver tab live.
   exactly; CH3 always mirrors the throttle stick, in every state below
   too; CH5 (arm) sits low; CH9 (lock) always sits centred;
   CH6/CH7/CH8/CH10 (Aux2/3/4/6) pass straight through. The six live gains
-  show top-right, the selected one at right-centre.
+  show top-right, the selected one flagged `>`.
 - Move Aux6 off centre → `CENTER AUX6 TO LOCK` appears and Aux5 is
   ignored. Centre it again to proceed.
 - Lock onto a target (Aux5, wheel centred) → box turns orange, `LOCKED`.

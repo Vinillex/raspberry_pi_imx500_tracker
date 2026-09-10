@@ -32,10 +32,6 @@ _GAIN_ROWS = (
     ("roll_kp", "R Kp"), ("roll_ki", "R Ki"), ("roll_kd", "R Kd"),
     ("pitch_kp", "P Kp"), ("pitch_ki", "P Ki"), ("pitch_kd", "P Kd"),
 )
-_GAIN_PRETTY = {
-    "roll_kp": "ROLL Kp", "roll_ki": "ROLL Ki", "roll_kd": "ROLL Kd",
-    "pitch_kp": "PITCH Kp", "pitch_ki": "PITCH Ki", "pitch_kd": "PITCH Kd",
-}
 
 
 def draw(frame, box, box_color, status_text, status_color, channel_snapshot,
@@ -53,10 +49,10 @@ def draw(frame, box, box_color, status_text, status_color, channel_snapshot,
     fps            - current frame rate, or None to hide it
     gains          - dict of the six live PID gains (GainState.snapshot())
                       to show top-right, or None to hide the panel
-    selected_gain  - key of the gain currently being tuned (flagged in
-                      the panel and echoed large at right-centre)
-    aux6_centered  - False adds a "CENTER AUX6 TO LOCK" warning under the
-                      right-centre label (only drawn when gains is given)
+    selected_gain  - key of the gain currently being tuned (flagged '>'
+                      in the panel)
+    aux6_centered  - False draws a "CENTER AUX6 TO LOCK" warning across
+                      the frame centre (only when gains is given)
     """
     if box is not None:
         x, y, w, h = box
@@ -102,10 +98,9 @@ def _draw_fps(frame, fps):
 
 def _draw_gains(frame, gains, selected, centered):
     """Top-right: the six live PID gains, one per line, the selected one
-    flagged with '>' and drawn in yellow. Then, large at the right edge
-    of the vertical centre, the selected gain's name and value - plus a
-    warning if Aux6 isn't centred (so Aux5 can't lock yet). Shown only
-    in the DETECTING state; hidden entirely when gains is None."""
+    flagged with '>' and drawn in yellow. If Aux6 isn't centred (so Aux5
+    can't lock yet), a warning across the frame centre. Shown only in the
+    DETECTING state; hidden entirely when gains is None."""
     if not gains:
         return
 
@@ -118,13 +113,8 @@ def _draw_gains(frame, gains, selected, centered):
                     FONT, GAIN_SCALE, YELLOW if sel else WHITE, 1)
         y += 20
 
-    yc = frame.shape[0] // 2
-    if selected in _GAIN_PRETTY:
-        _text(frame, f"{_GAIN_PRETTY[selected]}  {gains[selected]:.1f}",
-              yc, YELLOW, scale=LABEL_SCALE, align="right")
     if not centered:
-        _text(frame, "CENTER AUX6 TO LOCK", yc + 26, RED,
-              scale=LABEL_SCALE, align="right")
+        _text(frame, "CENTER AUX6 TO LOCK", frame.shape[0] // 2, RED)
 
 
 def _draw_channels(frame, channel_snapshot):
