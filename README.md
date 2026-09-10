@@ -142,9 +142,10 @@ transmitter:
 **Aux6 is the scroll wheel, used as a _relative_ control** — only how far
 you turn it matters, not where it sits. Turn forward → the selected gain
 climbs; turn back past where you started → it drops; stop anywhere → it
-holds there. `GAIN_LIMITS` in `config.py` gives each gain's min/max and
-how much a full wheel sweep moves it. Tuned values persist across
-arm/disarm cycles; restarting `main_ai.py` resets them.
+holds there. `GAIN_SWEEP` in `config.py` sets how much a full wheel sweep
+moves each gain. Gains floor at 0 but have **no upper cap** — Kp etc. can
+go as high as you want. Tuned values persist across arm/disarm cycles;
+restarting `main_ai.py` resets them.
 
 - **The wheel only adjusts while ARMED.** In DETECTING you use
   Aux2/Aux3/Aux4 to *pick* which gain you'll tune; Aux6 does nothing

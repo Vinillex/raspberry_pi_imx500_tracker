@@ -125,15 +125,17 @@ AUX6_DEADBAND = 0.06           # |wheel deflection|, as a fraction of full
                                # centred - the interlock that must be
                                # satisfied before Aux5 can lock
 
-# Per-gain: (min, max, gain change for one full Aux6 sweep, MIN->MAX).
-# Halve the third number for finer control, raise it for coarser.
-GAIN_LIMITS = {
-    "roll_kp":  (0.0, 800.0, 600.0),
-    "roll_ki":  (0.0, 300.0, 240.0),
-    "roll_kd":  (0.0, 400.0, 300.0),
-    "pitch_kp": (0.0, 800.0, 600.0),
-    "pitch_ki": (0.0, 300.0, 240.0),
-    "pitch_kd": (0.0, 400.0, 300.0),
+# Per-gain: how much one full Aux6 sweep (MIN->MAX) moves the gain.
+# Halve for finer control, raise for coarser. Gains are floored at 0
+# (turn the wheel back past 0 and it just stops) but have NO upper cap -
+# Kp etc. can go as high as you want.
+GAIN_SWEEP = {
+    "roll_kp":  600.0,
+    "roll_ki":  240.0,
+    "roll_kd":  300.0,
+    "pitch_kp": 600.0,
+    "pitch_ki": 240.0,
+    "pitch_kd": 300.0,
 }
 
 # --------------------------------------------------------------------------

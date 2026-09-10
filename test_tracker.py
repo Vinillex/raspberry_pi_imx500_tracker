@@ -10,7 +10,7 @@ with synthetic data; this is that test.
 import sys
 
 from tracker import AuxLock, ArmLatch, GainTuner, ErrorTracker
-from config import CRSF_MIN, CRSF_MID, CRSF_MAX, GAIN_LIMITS, ROLL_KP
+from config import CRSF_MIN, CRSF_MID, CRSF_MAX, GAIN_SWEEP, ROLL_KP
 
 failures = []
 
@@ -120,7 +120,7 @@ HALF_SWEEP_FRAC = (CRSF_MAX - CRSF_MID) / (CRSF_MAX - CRSF_MIN)   # centre -> fu
 
 print("\nGainTuner - Aux6 is a relative control (only movement counts)")
 gt = GainTuner()
-lo, hi, span = GAIN_LIMITS["roll_kp"]
+span = GAIN_SWEEP["roll_kp"]
 start = gt.gains["roll_kp"]
 g, name, _ = gt.update(LOW, MID, LOW, CRSF_MID)      # first call only anchors
 check("reports the selection", name == "roll_kp")
@@ -153,7 +153,7 @@ check("wheel movement while disarmed never touches the value",
 
 print("\nGainTuner - disarm commits, re-centre, re-arm continues from there")
 gt = GainTuner()
-lo, hi, span = GAIN_LIMITS["roll_kd"]
+span = GAIN_SWEEP["roll_kd"]
 v0 = gt.gains["roll_kd"]
 step = HALF_SWEEP_FRAC * span
 gt.update(HIGH, MID, LOW, CRSF_MID, allow_ramp=True)          # arm, anchor centre
@@ -182,20 +182,20 @@ _, _, centred = gt.update(MID, MID, LOW, CRSF_MAX, allow_ramp=True)
 check("wheel turned well off centre -> not centred", centred is False)
 
 
-print("\nGainTuner - ratcheting (commit / re-centre / turn) clamps to the envelope")
-lo, hi, _ = GAIN_LIMITS["pitch_kd"]
+print("\nGainTuner - ratcheting up has NO cap; ratcheting down floors at 0")
 gt = GainTuner()
 for _ in range(10):
     gt.update(MID, HIGH, HIGH, CRSF_MID, allow_ramp=False)   # re-centre (absorbed)
     gt.update(MID, HIGH, HIGH, CRSF_MID, allow_ramp=True)    # arm, anchor centre
     g, _, _ = gt.update(MID, HIGH, HIGH, CRSF_MAX, allow_ramp=True)   # turn up
-check("ratcheting up clamps at the gain's max", g["pitch_kd"] == hi)
+check("ratcheting up keeps climbing past any old cap (was 400)",
+     g["pitch_kd"] > 1000.0)
 gt = GainTuner()
 for _ in range(10):
     gt.update(MID, HIGH, HIGH, CRSF_MID, allow_ramp=False)
     gt.update(MID, HIGH, HIGH, CRSF_MID, allow_ramp=True)
     g, _, _ = gt.update(MID, HIGH, HIGH, CRSF_MIN, allow_ramp=True)   # turn down
-check("ratcheting down clamps at the gain's min", g["pitch_kd"] == lo)
+check("ratcheting down can't go below 0", g["pitch_kd"] == 0.0)
 
 
 print("\nGainTuner - a selection change doesn't leak wheel movement")

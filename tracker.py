@@ -13,7 +13,7 @@ tested with synthetic data.
 import time
 
 from config import (MAIN_SIZE, MATCH_RADIUS_FRAC, RATE_ALPHA,
-                    AUX_LOW_MAX, AUX_HIGH_MIN, AUX6_DEADBAND, GAIN_LIMITS,
+                    AUX_LOW_MAX, AUX_HIGH_MIN, AUX6_DEADBAND, GAIN_SWEEP,
                     CRSF_MIN, CRSF_MID, CRSF_MAX,
                     ROLL_KP, ROLL_KI, ROLL_KD, PITCH_KP, PITCH_KI, PITCH_KD)
 from vision import box_center, nearest_idx
@@ -159,8 +159,9 @@ class GainTuner:
     started and it drops; stop anywhere and the value holds there. The
     wheel's position while disarmed is absorbed (no jump on re-arm), so
     the normal flow is: tune -> disarm to commit -> re-centre the wheel
-    -> re-arm and keep going from the new value. config.GAIN_LIMITS gives
-    the per-gain min/max and how much a full wheel sweep moves it.
+    -> re-arm and keep going from the new value. config.GAIN_SWEEP gives
+    how much a full wheel sweep moves each gain; gains are floored at 0
+    with no upper cap.
 
     Tuned values persist across arm/disarm cycles; only recreating this
     object (restarting the script) resets them to the config defaults.
@@ -219,9 +220,8 @@ class GainTuner:
         self._wheel = aux6
 
         if allow_ramp and move and name == self._sel:
-            lo, hi, span = GAIN_LIMITS[name]
-            stepped = self._g[name] + move / self._WHEEL_SPAN * span
-            self._g[name] = max(lo, min(hi, stepped))
+            stepped = self._g[name] + move / self._WHEEL_SPAN * GAIN_SWEEP[name]
+            self._g[name] = max(0.0, stepped)
 
         self._sel = name
         return dict(self._g), name, centred
