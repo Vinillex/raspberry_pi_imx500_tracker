@@ -84,8 +84,7 @@ THROTTLE_SEARCHING = int(CRSF_MIN + 0.8 * (CRSF_MAX - CRSF_MIN))  # SEARCHING - 
 ROLL_KP = 620.0                 # proportional gain (counts per unit error)
 ROLL_KI = 0.0                   # integral gain - starts at 0, windup-prone,
                                  # needs careful bench tuning
-ROLL_KD = 0.0                   # derivative gain - zeroed to tune pure P
-                                 # first; add back once Kp is set (bench)
+ROLL_KD = 35.0                   # derivative gain - bench-tuned after Kp
 ROLL_I_MAX = 200.0              # anti-windup clamp on the integral accumulator
 
 PITCH_KP = 260.0
