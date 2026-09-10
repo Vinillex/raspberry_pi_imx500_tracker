@@ -11,11 +11,14 @@ from config import (ROLL_KP, ROLL_KI, ROLL_KD, ROLL_I_MAX,
                     PITCH_KP, PITCH_KI, PITCH_KD, PITCH_I_MAX,
                     MAX_DEFLECTION, DEADZONE, VISION_TIMEOUT,
                     ROLL_SIGN, PITCH_SIGN, CH_ROLL, CH_PITCH,
-                    CH_AUX1, CH_AUX4, CH_AUX5, CH_AUX6,
+                    CH_AUX1, CH_AUX4, CH_AUX5,
                     CRSF_MIN, CRSF_MID, CRSF_MAX)
 from crsf_protocol import clamp_channel
 
-REPURPOSED_CHANNELS = (CH_AUX5, CH_AUX6)
+# Aux5 (detection lock) is a Pi-side control and must never reach the FC.
+# Aux6 used to be here too (camera zoom); zoom logic has been removed and
+# Aux6 now passes straight through.
+REPURPOSED_CHANNELS = (CH_AUX5,)
 
 
 def clamp(v, lo, hi):
@@ -110,9 +113,9 @@ class TrackController:
 
     def apply(self, channels):
         """Returns the (possibly modified) channel list."""
-        # Aux5 (detection lock) and Aux6 (camera zoom) are repurposed as
-        # Pi-side controls (see vision.py / tracker.py / main_ai.py) and
-        # must never reach the FC - neutralise them unconditionally.
+        # Aux5 (detection lock) is a Pi-side control (see tracker.py /
+        # main_ai.py) and must never reach the FC - neutralise it. Aux6
+        # is no longer touched (zoom logic removed) and passes through.
         for aux_ch in REPURPOSED_CHANNELS:
             _set_channel(channels, aux_ch, CRSF_MID)
 

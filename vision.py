@@ -8,55 +8,12 @@ be imported and tested on a machine without a camera.
 import sys
 
 from config import (MODEL, TARGET_CLASS, THRESHOLD, MAX_DETECTIONS,
-                    MAIN_SIZE, HFLIP, VFLIP, ZOOM_MIN, ZOOM_MAX,
-                    TARGET_BOX_FRAC, AUTO_ZOOM_DEADBAND, AUTO_ZOOM_KP,
-                    AUTO_ZOOM_MAX_STEP, AUTO_ZOOM_EDGE_MARGIN_FRAC)
+                    MAIN_SIZE, HFLIP, VFLIP)
 
 
 def box_center(box):
     x, y, w, h = box
     return (x + w / 2.0, y + h / 2.0)
-
-
-def auto_zoom_factor(current_factor, box, frame_size,
-                     target_frac=TARGET_BOX_FRAC,
-                     deadband=AUTO_ZOOM_DEADBAND,
-                     kp=AUTO_ZOOM_KP, max_step=AUTO_ZOOM_MAX_STEP,
-                     edge_margin_frac=AUTO_ZOOM_EDGE_MARGIN_FRAC):
-    """Proportional zoom control, height-based: nudges `current_factor`
-    so box height / frame height moves toward `target_frac`. Within
-    +/-`deadband` of the target (e.g. 40-60%), holds still rather than
-    correcting. Each call moves by at most `max_step`, so zoom eases
-    in/out slowly instead of jumping and overshooting.
-
-    Also holds still if `box` is within `edge_margin_frac` of any frame
-    edge - the crop is always centred on the frame (not the box), so
-    zooming further in that situation risks cropping the target out
-    entirely rather than framing it better.
-
-    `box=None` means nothing to track (SEARCHING) - zoom out completely
-    (ZOOM_MIN) for maximum FOV to help reacquire, rather than holding."""
-    if box is None:
-        return ZOOM_MIN
-
-    frame_w, frame_h = frame_size
-    x, y, bw, bh = box
-
-    margin_x = edge_margin_frac * frame_w
-    margin_y = edge_margin_frac * frame_h
-    near_edge = (x < margin_x or y < margin_y
-                or (frame_w - (x + bw)) < margin_x
-                or (frame_h - (y + bh)) < margin_y)
-    if near_edge:
-        return current_factor
-
-    frac = bh / frame_h
-    error = target_frac - frac
-    if abs(error) <= deadband:
-        return current_factor
-
-    step = max(-max_step, min(max_step, kp * error))
-    return max(ZOOM_MIN, min(ZOOM_MAX, current_factor + step))
 
 
 def nearest_idx(detections, point):
@@ -111,20 +68,6 @@ class Camera:
         self.imx500.show_network_fw_progress_bar()
         self.picam2.start(self.config)
         self.size = size
-        self._full_crop = self.picam2.camera_properties.get("ScalerCropMaximum")
-        if not self._full_crop:
-            print("IMX500: ScalerCropMaximum not available - set_zoom() "
-                  "will have no effect", file=sys.stderr)
-
-        # Needed to sync the network's own analysis crop to the zoom - without
-        # this, ScalerCrop alone only crops what's *displayed*; the IMX500
-        # accelerator keeps running inference on the full, un-zoomed sensor
-        # image, so it would still detect things outside the zoomed-in view.
-        self._roi_supported = hasattr(self.imx500, "set_inference_roi_abs")
-        if not self._roi_supported:
-            print("IMX500: set_inference_roi_abs() not available - zoom "
-                  "will crop the display but not restrict detection",
-                  file=sys.stderr)
 
     # ----------------------------------------------------------------
     def capture(self):
@@ -151,32 +94,6 @@ class Camera:
                 box, metadata, self.picam2)
             result.append(Detection(coords, float(score)))
         return result[:limit]
-
-    def set_zoom(self, factor):
-        """Digital zoom via sensor crop, synced to the IMX500 inference ROI
-        so detection only runs on the zoomed-in region - not the full
-        frame. factor=1.0 is full FOV; larger values crop in tighter
-        around the frame centre."""
-        if not self._full_crop:
-            return
-        factor = max(1.0, factor)
-        fx, fy, fw, fh = self._full_crop
-        w = int(fw / factor)
-        h = int(fh / factor)
-        x = fx + (fw - w) // 2
-        y = fy + (fh - h) // 2
-        crop = (x, y, w, h)
-
-        try:
-            self.picam2.set_controls({"ScalerCrop": crop})
-        except Exception:
-            pass
-
-        if self._roi_supported:
-            try:
-                self.imx500.set_inference_roi_abs(crop)
-            except Exception:
-                pass
 
     def stop(self):
         try:

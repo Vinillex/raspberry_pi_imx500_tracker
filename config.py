@@ -55,8 +55,8 @@ CH_AUX4 = 7    # repurposed as the GPS-rescue trigger - see RESCUE_CH_MIN below;
                # never a raw passthrough of the pilot's switch
 CH_AUX5 = 8    # repurposed as the detection-lock switch - see LOCK_CH_MIN below;
                # never forwarded to the FC (controller.py neutralises it)
-CH_AUX6 = 9    # repurposed as the camera zoom control - see ZOOM_MIN/MAX below;
-               # never forwarded to the FC (controller.py neutralises it)
+CH_AUX6 = 9    # free channel - passes straight through to the FC (was the
+               # camera-zoom control; zoom logic has been removed)
 
 CH_NAMES = ["Roll", "Pitch", "Thr", "Yaw",
             "Aux1", "Aux2", "Aux3", "Aux4",
@@ -112,20 +112,6 @@ MAIN_SIZE = (640, 480)
 HFLIP = 0
 VFLIP = 0
 MATCH_RADIUS_FRAC = 0.45      # of frame width; max frame-to-frame jump
-
-ZOOM_MIN = 1.0                 # Aux6 low  -> no digital zoom (full FOV)
-ZOOM_MAX = 4.0                 # Aux6 high -> max digital zoom
-
-TARGET_BOX_FRAC = 0.5          # ARMED auto-zoom target: box height / frame height
-AUTO_ZOOM_DEADBAND = 0.10       # +/-10% (40-60%) counts as close enough, no correction
-AUTO_ZOOM_KP = 1.5              # proportional gain for the auto-zoom loop -
-                                # needs bench tuning like KP/KD above
-AUTO_ZOOM_MAX_STEP = 0.02       # max zoom-factor change per frame - slow ease
-                                # in/out, so it doesn't overshoot
-AUTO_ZOOM_EDGE_MARGIN_FRAC = 0.08   # if the box is within this fraction of any
-                                     # frame edge, hold zoom - the crop is always
-                                     # centred on the frame, so zooming further
-                                     # risks cropping the target out entirely
 
 LOCK_CH = CH_AUX5             # switch that locks onto the current detection
 LOCK_CH_MIN = 1300             # must be at or above this to lock

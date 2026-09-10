@@ -34,6 +34,7 @@ def make_channels():
     ch[CH_ROLL] = 1700
     ch[CH_PITCH] = 300
     ch[CH_THROTTLE] = 500
+    ch[CH_AUX6] = 1234   # free channel - must pass straight through
     return ch
 
 
@@ -77,7 +78,8 @@ out = c.apply(make_channels())
 check("pilot has full manual control on roll/pitch/throttle",
      out[CH_ROLL] == 1700 and out[CH_PITCH] == 300 and out[CH_THROTTLE] == 500)
 check("Aux5 neutralised even when not armed", out[CH_AUX5] == CRSF_MID)
-check("Aux6 neutralised even when not armed", out[CH_AUX6] == CRSF_MID)
+check("Aux6 passes straight through (zoom logic removed - it's a free channel)",
+     out[CH_AUX6] == 1234)
 check("Aux1 forced low (not a raw passthrough) when not armed and not locked",
      out[CH_AUX1] == CRSF_MIN)
 check("Aux4 forced low when not in rescue", out[CH_AUX4] == CRSF_MIN)
@@ -178,11 +180,11 @@ check("CH5 forced low once DISABLED, despite ARMED being true",
      out[CH_AUX1] == CRSF_MIN)
 check("CH8 forced low once DISABLED, despite rescue being true",
      out[CH_AUX4] == CRSF_MIN)
-check("Aux5/Aux6 still neutralised while DISABLED",
-     out[CH_AUX5] == CRSF_MID and out[CH_AUX6] == CRSF_MID)
-check("roll/pitch/throttle are full pilot passthrough once DISABLED, "
+check("Aux5 still neutralised while DISABLED", out[CH_AUX5] == CRSF_MID)
+check("roll/pitch/throttle/Aux6 are full pilot passthrough once DISABLED, "
      "even with a strong locked-target error and ARMED/rescue both true",
-     out[CH_ROLL] == 1700 and out[CH_PITCH] == 300 and out[CH_THROTTLE] == 500)
+     out[CH_ROLL] == 1700 and out[CH_PITCH] == 300
+     and out[CH_THROTTLE] == 500 and out[CH_AUX6] == 1234)
 
 # Nothing reverses it - not lowering arm/rescue, not a fresh target error.
 arm.set(False)

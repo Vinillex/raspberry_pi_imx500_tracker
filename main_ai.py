@@ -22,16 +22,14 @@ stops everything else, for the rest of the run.
 import argparse
 import time
 
-from config import (PORT_UP, PORT_DOWN, BAUD, CH_AUX6, FPS_ALPHA,
-                    RC_TIMEOUT, ZOOM_MIN, ZOOM_MAX, LOCK_CH, LOCK_CH_MIN,
+from config import (PORT_UP, PORT_DOWN, BAUD, FPS_ALPHA,
+                    RC_TIMEOUT, LOCK_CH, LOCK_CH_MIN,
                     ARM_CH, ARM_CH_MIN, RESCUE_CH, RESCUE_CH_MIN,
                     GREEN, ORANGE, RED, BLUE, BLACK)
-from crsf_protocol import crsf_to_range
 from state import TargetState, ChannelState, ArmState, RescueState, DisableState
 from bridge import CrsfBridge
 from controller import TrackController
 from tracker import AuxLock, ArmLatch, GpsRescueLatch, DisableLatch, ErrorTracker
-from vision import auto_zoom_factor
 
 
 def resolve_lock(aux_lock, detections, lock_on_switch, aux1_high, aux4_high, armed):
@@ -57,24 +55,6 @@ def resolve_lock(aux_lock, detections, lock_on_switch, aux1_high, aux4_high, arm
     is_locked = lock_on and locked_box is not None
 
     return lock_on, locked_box, is_locked, lock_blocked
-
-
-def resolve_zoom(armed, fresh, input_ch, locked_box, camera, zoom):
-    """Once armed, Aux6 has no effect any more - a closed loop drives
-    CH10 itself to keep the locked box's height at TARGET_BOX_FRAC of
-    the frame height (see vision.auto_zoom_factor for the deadband/
-    step-limiting/edge-margin/SEARCHING behaviour). Before armed, Aux6
-    drives it manually as before.
-
-    Returns the new zoom factor; also calls camera.set_zoom() as a
-    side effect, same as the inline code this replaces."""
-    if armed:
-        zoom = auto_zoom_factor(zoom, locked_box, camera.size)
-        camera.set_zoom(zoom)
-    elif fresh:
-        zoom = crsf_to_range(input_ch[CH_AUX6], ZOOM_MIN, ZOOM_MAX)
-        camera.set_zoom(zoom)
-    return zoom
 
 
 def select_overlay_state(disabled, gps_rescue, armed, locked_box, lock_on,
@@ -143,8 +123,6 @@ def main():
     gps_latch = GpsRescueLatch()
     disable_latch = DisableLatch()
     armed = False            # sticky once True; see tracker.ArmLatch
-    zoom = ZOOM_MIN           # current zoom factor; Aux6-driven until armed,
-                              # then auto_zoom_factor() takes over
     fps = 0.0
     prev_t = time.monotonic()
 
@@ -221,8 +199,6 @@ def main():
             if disabled:
                 countdown = None
                 error_lines = []
-
-            zoom = resolve_zoom(armed, fresh, input_ch, locked_box, camera, zoom)
 
             box, box_color, text = select_overlay_state(
                 disabled, gps_rescue, armed, locked_box, lock_on, is_locked,

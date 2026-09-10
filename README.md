@@ -26,7 +26,7 @@ Known-bad: **GPIO0** (pin 27) — low-side driver damaged, never use as UART TX.
 | `state.py` | `TargetState`, `ChannelState`, `ArmState`, `RescueState`, `DisableState` (all thread-safe), `Stats` | no |
 | `controller.py` | PID control law + safety gates | no |
 | `tracker.py` | `AuxLock` (detection lock), `ArmLatch`, `GpsRescueLatch`, `DisableLatch`, `ErrorTracker` (error + rate) | no |
-| `vision.py` | IMX500 / picamera2 wrapper, auto-zoom | camera |
+| `vision.py` | IMX500 / picamera2 wrapper, detection parsing | camera |
 | `bridge.py` | serial ports and forwarding threads | serial |
 | `overlay.py` | all OpenCV drawing | cv2 |
 | `main_bridge.py` | entry: plain pass-through bridge | serial |
@@ -72,15 +72,17 @@ python3 main_ai.py --no-display     # headless
 All 16 channels are always decoded and re-encoded; `--show` only affects
 what gets printed.
 
-Aux5 (lock), Aux1 (arm), Aux4 (GPS rescue) and Aux6 (zoom) are all
-repurposed as Pi-side controls — see `config.py`'s comments on each — and
-none of their raw values ever reach the FC unmodified.
+Aux5 (lock), Aux1 (arm) and Aux4 (GPS rescue) are repurposed as Pi-side
+controls — see `config.py`'s comments on each — and none of their raw
+values reach the FC unmodified. Aux6 is a free channel (was camera zoom;
+that logic has been removed) and passes straight through.
 
 ## Safety gates
 
 `TrackController.apply()` in `controller.py`:
 
-- Aux5/Aux6 (lock/zoom) are always neutralised — never forwarded to the FC.
+- Aux5 (lock) is always neutralised — never forwarded to the FC. Aux6
+  passes straight through (free channel).
 - Aux1 (arm) and Aux4 (GPS rescue) are never a raw passthrough of the pilot's
   switch.
 - **CH5 (Aux1) is high whenever ARMED *or* LOCKED**, not only once actually
@@ -152,8 +154,8 @@ screen, not by watching Betaflight's Receiver tab live.
 
 - Not armed, nothing locked → CH1/CH2 mirror the sticks exactly; CH3 always
   mirrors the throttle stick, in every state below too; CH5 (arm) sits low;
-  CH8 (rescue) sits low regardless of switch position; CH9/CH10 (lock/zoom)
-  always sit centred.
+  CH8 (rescue) sits low regardless of switch position; CH9 (lock) always
+  sits centred; CH10 (Aux6, free) passes straight through.
 - Lock onto a target (Aux5) → **CH5 goes high immediately, before you've
   touched Aux1 at all.** This is deliberate (see Safety gates above) — the
   FC will attempt to arm right here if throttle is at idle and nothing else
