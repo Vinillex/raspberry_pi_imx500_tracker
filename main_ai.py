@@ -9,11 +9,12 @@ Wires the modules together:
 
 The bridge runs on background threads; the vision loop owns the main
 thread. Aux5 locks onto a detection, Aux1 arms (edge-triggered, requires
-LOCKED first, one-way), and controller.py takes over roll/pitch/throttle
-entirely once armed - see README.md's "Safety gates" section. For bench
-testing, lowering Aux1 while ARMED triggers DISABLED - a one-way kill
-switch (tracker.DisableLatch) that forces CH5 low and stops everything
-else, for the rest of the run.
+LOCKED first), and controller.py takes over roll/pitch entirely once
+armed - see README.md's "Safety gates" section. On this static-testing
+branch arming is not one-way: lowering Aux1 disarms (drops CH5, disarms
+the FC), ready for the next tuning pass. Aux2/Aux3/Aux4 select a PID
+gain and Aux6 (a spring-return wheel) ramps it live - see
+tracker.GainTuner.
 
     python3 main_ai.py
     python3 main_ai.py --no-display
@@ -25,11 +26,13 @@ import time
 from config import (PORT_UP, PORT_DOWN, BAUD, FPS_ALPHA,
                     RC_TIMEOUT, LOCK_CH, LOCK_CH_MIN,
                     ARM_CH, ARM_CH_MIN,
-                    GREEN, ORANGE, RED, BLACK)
-from state import TargetState, ChannelState, ArmState, DisableState
+                    CH_AUX2, CH_AUX3, CH_AUX4, CH_AUX6,
+                    CRSF_MID, CRSF_MIN,
+                    GREEN, ORANGE, RED)
+from state import TargetState, ChannelState, ArmState, GainState
 from bridge import CrsfBridge
 from controller import TrackController
-from tracker import AuxLock, ArmLatch, DisableLatch, ErrorTracker
+from tracker import AuxLock, ArmLatch, GainTuner, ErrorTracker
 
 
 def resolve_lock(aux_lock, detections, lock_on_switch, aux1_high, armed):
@@ -56,21 +59,15 @@ def resolve_lock(aux_lock, detections, lock_on_switch, aux1_high, armed):
     return lock_on, locked_box, is_locked, lock_blocked
 
 
-def select_overlay_state(disabled, armed, locked_box, lock_on,
-                        is_locked, detections):
+def select_overlay_state(armed, locked_box, lock_on, is_locked, detections):
     """Decide what the overlay should show this frame, in priority
-    order: DISABLED (terminal - bench-test kill switch, tracker.
-    DisableLatch, overrides everything else forever once triggered) >
-    ARMED/SEARCHING (object left the frame -> drop the box rather than
-    hold a stale one; resumes ARMED the instant it's matched again,
-    since aux_lock keeps trying every frame) > LOCKED/NO OBJECT
-    DETECTED ("LOCKED" only while the object is actually matched this
-    frame) > DETECTING/DETECTED.
+    order: ARMED/SEARCHING (object left the frame -> drop the box rather
+    than hold a stale one; resumes ARMED the instant it's matched again,
+    since aux_lock keeps trying every frame) > LOCKED/NO OBJECT DETECTED
+    ("LOCKED" only while the object is actually matched this frame) >
+    DETECTING/DETECTED (the state the gain panel is shown in).
 
     Returns (box, box_color, text)."""
-    if disabled:
-        return None, BLACK, "DISABLED"
-
     if armed:
         if locked_box is not None:
             return locked_box, RED, "ARMED"
@@ -96,8 +93,8 @@ def main():
 
     target = TargetState()
     arm_state = ArmState()
-    disable_state = DisableState()
-    controller = TrackController(target, arm_state, disable_state)
+    gain_state = GainState()
+    controller = TrackController(target, arm_state, gain_state)
     channel_state = ChannelState()
 
     # Serial first - if the ports fail we should not start the camera.
@@ -113,8 +110,8 @@ def main():
     aux_lock = AuxLock(size=camera.size)
     error_tracker = ErrorTracker(size=camera.size)
     arm_latch = ArmLatch()
-    disable_latch = DisableLatch()
-    armed = False            # sticky once True; see tracker.ArmLatch
+    gain_tuner = GainTuner()
+    armed = False            # follows Aux1 once locked; see tracker.ArmLatch
     fps = 0.0
     prev_t = time.monotonic()
 
@@ -137,8 +134,22 @@ def main():
             input_ch, output_ch, stamp = channel_state.snapshot()
             fresh = input_ch is not None and time.monotonic() - stamp <= RC_TIMEOUT
 
-            lock_on_switch = fresh and input_ch[LOCK_CH] >= LOCK_CH_MIN
+            # Aux2/Aux3/Aux4 select a PID gain, Aux6 (spring-return wheel)
+            # ramps it. Fall back to neutral positions when RC is stale so
+            # a dropout can't ramp a gain or hold a phantom selection.
+            aux2 = input_ch[CH_AUX2] if fresh else CRSF_MID
+            aux3 = input_ch[CH_AUX3] if fresh else CRSF_MID
+            aux4 = input_ch[CH_AUX4] if fresh else CRSF_MIN
+            aux6 = input_ch[CH_AUX6] if fresh else CRSF_MID
+            gains, selected_gain, aux6_centered = gain_tuner.update(
+                aux2, aux3, aux4, aux6, dt)
+            gain_state.publish(gains)
+
             aux1_high = fresh and input_ch[ARM_CH] >= ARM_CH_MIN
+            # Aux5 is only honoured once Aux6 is centred - keeps a gain
+            # from ramping while you set up the lock/arm sequence.
+            lock_switch_raw = fresh and input_ch[LOCK_CH] >= LOCK_CH_MIN
+            lock_on_switch = lock_switch_raw and aux6_centered
 
             lock_on, locked_box, is_locked, lock_blocked = resolve_lock(
                 aux_lock, detections, lock_on_switch, aux1_high, armed)
@@ -154,36 +165,37 @@ def main():
                 target.invalidate()
 
             # Aux1 -> arm, but only an edge that happens while already
-            # locked counts (see tracker.ArmLatch). Once armed, it's a
-            # one-way latch: nothing disarms it for the rest of this run.
+            # locked counts (see tracker.ArmLatch). On this branch it is
+            # not one-way: lowering Aux1 disarms again, ready for the next
+            # gain. controller.py drops CH5 (disarming the FC) to match.
             armed = arm_latch.update(aux1_high, is_locked)
             arm_state.set(armed)
-
-            # Aux1 low while ARMED -> DISABLED: a deliberate bench-test
-            # kill switch (see tracker.DisableLatch). One-way, terminal -
-            # once this fires, nothing else in this loop or in
-            # controller.py has any further effect for the rest of this run.
-            disabled = disable_latch.update(aux1_high, armed)
-            disable_state.set(disabled)
 
             # Blocking-state label, right of centre - "ARMED" while a
             # new-lock attempt is blocked by Aux1 already being high.
             # Only reachable pre-arm (once armed the main status text
-            # covers it, and DISABLED implies armed), so no disabled
-            # special-case is needed here.
+            # covers it).
             error_lines = []
             if not armed and lock_blocked and aux1_high:
                 error_lines.append("ARMED")
 
             box, box_color, text = select_overlay_state(
-                disabled, armed, locked_box, lock_on, is_locked, detections)
+                armed, locked_box, lock_on, is_locked, detections)
+
+            # The live-gain panel + selected-gain label show only in the
+            # DETECTING state (not armed, no lock switch) - the setup
+            # phase before you lock and arm.
+            detecting = not armed and not lock_on
+            panel = gains if detecting else None
 
             if args.no_display:
                 continue
 
             overlay.draw(frame, box, box_color, text, box_color,
                         (input_ch, output_ch, stamp),
-                        error_lines=error_lines, fps=fps)
+                        error_lines=error_lines, fps=fps,
+                        gains=panel, selected_gain=selected_gain,
+                        aux6_centered=aux6_centered)
             key = overlay.show(frame)
             if key in (ord('q'), 27):   # 27 = Esc
                 break

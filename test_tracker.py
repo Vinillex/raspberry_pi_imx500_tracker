@@ -9,7 +9,8 @@ with synthetic data; this is that test.
 
 import sys
 
-from tracker import AuxLock, ArmLatch, DisableLatch, ErrorTracker
+from tracker import AuxLock, ArmLatch, GainTuner, ErrorTracker
+from config import CRSF_MIN, CRSF_MID, CRSF_MAX, GAIN_LIMITS, ROLL_KP
 
 failures = []
 
@@ -30,6 +31,7 @@ class D:
 
 
 SIZE = (640, 480)
+LOW, MID, HIGH = CRSF_MIN, CRSF_MID, CRSF_MAX
 
 
 print("\nAuxLock")
@@ -66,63 +68,120 @@ check("re-enabling with an object far from history acquires fresh (highest conf)
      lock.update([far_away, D((0, 0, 5, 5), 0.1)], True) == far_away.box)
 
 
-print("\nArmLatch")
-# Happy path: lock first, then raise Aux1 while locked -> arms
+print("\nArmLatch (static-testing: NOT one-way - lowering Aux1 disarms)")
 latch = ArmLatch()
 check("not armed, not high, not locked", latch.update(False, False) is False)
 check("locked, aux1 still low -> not armed", latch.update(False, True) is False)
 check("aux1 raised while locked -> ARMS", latch.update(True, True) is True)
-check("stays armed even if aux1 later drops", latch.update(False, False) is True)
-check("stays armed even if lock is lost", latch.update(False, False) is True)
-check("stays armed with aux1 high again (no fresh edge needed once armed)",
+check("stays armed while aux1 held high and the lock is lost (SEARCHING)",
      latch.update(True, False) is True)
+check("aux1 dropped -> DISARMS", latch.update(False, False) is False)
+check("aux1 high again but not locked -> stays disarmed",
+     latch.update(True, False) is False)
+check("aux1 still high, now locked, but no fresh low->high edge -> stays disarmed",
+     latch.update(True, True) is False)
+latch.update(False, True)   # lower aux1
+check("lower then raise while locked -> RE-ARMS", latch.update(True, True) is True)
+check("lower aux1 again -> disarms again", latch.update(False, True) is False)
 
 # Aux1 already high before the lock arrives -> must NOT arm
 latch2 = ArmLatch()
-check("aux1 high before lock", latch2.update(True, False) is False)
+check("aux1 high before lock -> not armed", latch2.update(True, False) is False)
 check("lock arrives while aux1 already high -> does NOT arm",
      latch2.update(True, True) is False)
-check("aux1 still high, still not armed", latch2.update(True, True) is False)
 latch2.update(False, True)   # lower aux1
 check("raising aux1 again while locked -> NOW arms",
      latch2.update(True, True) is True)
 
 
-print("\nDisableLatch")
-# Aux1 low while not armed -> no effect at all (this is normal pre-arm
-# state, not an abort request)
-dis = DisableLatch()
-check("aux1 low, not armed -> not disabled", dis.update(False, False) is False)
-check("aux1 high, not armed -> still not disabled", dis.update(True, False) is False)
+print("\nGainTuner - selection matrix (Aux4 axis, Aux2/Aux3 gain)")
+gt = GainTuner()
+check("Aux2 low,  Aux4 low  -> roll_kp",  gt.selected(LOW,  MID, LOW)  == "roll_kp")
+check("Aux2 mid,  Aux4 low  -> roll_ki",  gt.selected(MID,  MID, LOW)  == "roll_ki")
+check("Aux2 high, Aux4 low  -> roll_kd",  gt.selected(HIGH, MID, LOW)  == "roll_kd")
+check("Aux3 low,  Aux4 high -> pitch_kp", gt.selected(MID, LOW,  HIGH) == "pitch_kp")
+check("Aux3 mid,  Aux4 high -> pitch_ki", gt.selected(MID, MID,  HIGH) == "pitch_ki")
+check("Aux3 high, Aux4 high -> pitch_kd", gt.selected(MID, HIGH, HIGH) == "pitch_kd")
+check("Aux2 is ignored while Aux4 selects pitch",
+     gt.selected(HIGH, LOW, HIGH) == "pitch_kp")
+check("Aux3 is ignored while Aux4 selects roll",
+     gt.selected(LOW, HIGH, LOW) == "roll_kp")
 
-# Aux1 low while ARMED -> triggers
-dis2 = DisableLatch()
-check("aux1 high while armed -> not disabled yet", dis2.update(True, True) is False)
-check("aux1 drops while armed -> DISABLED", dis2.update(False, True) is True)
-check("stays disabled even if aux1 raised again",
-     dis2.update(True, True) is True)
-check("stays disabled even if armed later goes False",
-     dis2.update(True, False) is True)
+
+print("\nGainTuner - Aux6 deflection")
+check("centre -> 0.0", abs(GainTuner.deflection(CRSF_MID)) < 1e-9)
+check("full forward -> +1.0", abs(GainTuner.deflection(CRSF_MAX) - 1.0) < 1e-9)
+check("full back -> -1.0 (clamped)", GainTuner.deflection(CRSF_MIN) == -1.0)
+check("beyond range clamps to +1.0", GainTuner.deflection(9999) == 1.0)
+
+
+print("\nGainTuner - ramping the selected gain")
+gt = GainTuner()
+lo, hi, rate = GAIN_LIMITS["roll_kp"]
+start = gt.gains["roll_kp"]
+g, name, centred = gt.update(LOW, MID, LOW, CRSF_MAX, 1.0)   # full forward, 1 s
+check("reports the selected gain name", name == "roll_kp")
+check("full throw -> not centred", centred is False)
+check("full-forward for 1 s ramps roll_kp up by ~rate",
+     abs(g["roll_kp"] - (start + rate)) < 1e-6)
+check("untouched gains keep their defaults",
+     g["pitch_kd"] == GainTuner().gains["pitch_kd"])
+g, _, _ = gt.update(LOW, MID, LOW, CRSF_MIN, 1.0)           # full back, 1 s
+check("full-back for 1 s ramps roll_kp back down by ~rate",
+     abs(g["roll_kp"] - start) < 1e-6)
+g, _, _ = gt.update(LOW, MID, LOW, CRSF_MAX, 0.5)           # half the time
+check("ramp scales with dt", abs(g["roll_kp"] - (start + 0.5 * rate)) < 1e-6)
+
+
+print("\nGainTuner - centre deadband holds the value")
+gt = GainTuner()
+before = gt.gains["roll_ki"]
+g, name, centred = gt.update(MID, MID, LOW, CRSF_MID, 1.0)
+check("centred wheel -> centred True", centred is True)
+check("centred wheel -> gain unchanged", g["roll_ki"] == before)
+check("selection still tracked while centred", name == "roll_ki")
+near = CRSF_MID + int(0.03 * (CRSF_MAX - CRSF_MID))   # inside AUX6_DEADBAND
+g, _, centred = gt.update(MID, MID, LOW, near, 1.0)
+check("small off-centre within the deadband still holds",
+     centred is True and g["roll_ki"] == before)
+
+
+print("\nGainTuner - clamps to the per-gain envelope")
+gt = GainTuner()
+lo, hi, _ = GAIN_LIMITS["pitch_kd"]
+for _ in range(500):
+    g, _, _ = gt.update(MID, HIGH, HIGH, CRSF_MAX, 1.0)
+check("hammering the wheel up clamps at the gain's max", g["pitch_kd"] == hi)
+for _ in range(500):
+    g, _, _ = gt.update(MID, HIGH, HIGH, CRSF_MIN, 1.0)
+check("hammering it down clamps at the gain's min", g["pitch_kd"] == lo)
+
+
+print("\nGainTuner - values persist across calls and selection changes")
+gt = GainTuner()
+gt.update(LOW, MID, LOW, CRSF_MAX, 0.5)          # bump roll_kp
+bumped = gt.gains["roll_kp"]
+check("roll_kp stays bumped above its default", bumped > ROLL_KP)
+gt.update(MID, HIGH, HIGH, CRSF_MID, 1.0)        # switch to pitch_kd, wheel centred
+check("changing the selection doesn't disturb roll_kp",
+     gt.gains["roll_kp"] == bumped)
 
 
 print("\nErrorTracker")
 et = ErrorTracker(size=SIZE)
 check("no box -> None", et.update(None, now=0.0) is None)
 
-# Box centred exactly on frame centre -> zero error
 centred_box = (320 - 25, 240 - 25, 50, 50)   # centre at (320, 240) == frame centre
 ex, ey, ex_rate, ey_rate = et.update(centred_box, now=1.0)
 check("centred box -> ~zero error", abs(ex) < 1e-9 and abs(ey) < 1e-9)
 check("first sample -> zero rate (no prior sample)",
      ex_rate == 0.0 and ey_rate == 0.0)
 
-# Box in the top-left quadrant -> negative ex, negative ey
 tl_box = (0, 0, 20, 20)   # centre at (10, 10)
 ex2, ey2, _, _ = et.update(tl_box, now=1.1)
 check("top-left box -> negative ex", ex2 < 0)
 check("top-left box -> negative ey", ey2 < 0)
 
-# Losing the target resets state - reacquiring doesn't inherit a stale rate
 et.update(None, now=1.2)
 ex3, ey3, ex_rate3, ey_rate3 = et.update(centred_box, now=1.3)
 check("re-acquiring after loss starts with zero rate (no derivative spike)",

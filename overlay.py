@@ -14,7 +14,7 @@ import time
 
 import cv2
 
-from config import WHITE, RED, GREEN, RC_TIMEOUT, CH_NAMES, CH_AUX6
+from config import WHITE, RED, GREEN, YELLOW, RC_TIMEOUT, CH_NAMES, CH_AUX6
 
 FONT = cv2.FONT_HERSHEY_SIMPLEX
 N_SHOWN = CH_AUX6 + 1   # CH1-10 (AETR + Aux1-6); CH11-16 not shown
@@ -23,13 +23,27 @@ STATUS_SCALE = 0.7      # top-centre status text, FPS
 LABEL_SCALE = 0.55      # right-centre blocking-state labels
 CHANNEL_SCALE = 0.45    # bottom channel readout
 STALE_SCALE = 0.5       # "RX: NA"
+GAIN_SCALE = 0.5        # top-right live-gain panel
 TEXT_MARGIN = 10        # px from the frame edge for right-aligned text
+
+# Row order + short labels for the live PID-gain panel (top-right, shown
+# only in the DETECTING state). Keys match tracker.GainTuner / GainState.
+_GAIN_ROWS = (
+    ("roll_kp", "R Kp"), ("roll_ki", "R Ki"), ("roll_kd", "R Kd"),
+    ("pitch_kp", "P Kp"), ("pitch_ki", "P Ki"), ("pitch_kd", "P Kd"),
+)
+_GAIN_PRETTY = {
+    "roll_kp": "ROLL Kp", "roll_ki": "ROLL Ki", "roll_kd": "ROLL Kd",
+    "pitch_kp": "PITCH Kp", "pitch_ki": "PITCH Ki", "pitch_kd": "PITCH Kd",
+}
 
 
 def draw(frame, box, box_color, status_text, status_color, channel_snapshot,
-        error_lines=None, fps=None):
+        error_lines=None, fps=None, gains=None, selected_gain=None,
+        aux6_centered=True):
     """Draw the subject box, status text, CRSF channel readout and (if
-    given) the blocking-state labels and frame rate, in place.
+    given) the blocking-state labels, frame rate and live-gain panel,
+    in place.
 
     box            - (x, y, w, h) or None
     channel_snapshot - whatever ChannelState.snapshot() returned:
@@ -37,6 +51,12 @@ def draw(frame, box, box_color, status_text, status_color, channel_snapshot,
     error_lines    - list of labels (e.g. ["ARMED"]) to stack at
                       right-centre, one per line; None/empty to hide
     fps            - current frame rate, or None to hide it
+    gains          - dict of the six live PID gains (GainState.snapshot())
+                      to show top-right, or None to hide the panel
+    selected_gain  - key of the gain currently being tuned (flagged in
+                      the panel and echoed large at right-centre)
+    aux6_centered  - False adds a "CENTER AUX6 TO LOCK" warning under the
+                      right-centre label (only drawn when gains is given)
     """
     if box is not None:
         x, y, w, h = box
@@ -45,6 +65,7 @@ def draw(frame, box, box_color, status_text, status_color, channel_snapshot,
     _draw_status(frame, status_text, status_color)
     _draw_error(frame, error_lines)
     _draw_fps(frame, fps)
+    _draw_gains(frame, gains, selected_gain, aux6_centered)
     _draw_channels(frame, channel_snapshot)
     return frame
 
@@ -77,6 +98,33 @@ def _draw_fps(frame, fps):
     if fps is None:
         return
     cv2.putText(frame, f"{fps:.0f}", (10, 26), FONT, STATUS_SCALE, GREEN, 2)
+
+
+def _draw_gains(frame, gains, selected, centered):
+    """Top-right: the six live PID gains, one per line, the selected one
+    flagged with '>' and drawn in yellow. Then, large at the right edge
+    of the vertical centre, the selected gain's name and value - plus a
+    warning if Aux6 isn't centred (so Aux5 can't lock yet). Shown only
+    in the DETECTING state; hidden entirely when gains is None."""
+    if not gains:
+        return
+
+    x = frame.shape[1] - 175
+    y = 55
+    for key, label in _GAIN_ROWS:
+        sel = key == selected
+        mark = ">" if sel else " "
+        cv2.putText(frame, f"{mark} {label} {gains[key]:6.1f}", (x, y),
+                    FONT, GAIN_SCALE, YELLOW if sel else WHITE, 1)
+        y += 20
+
+    yc = frame.shape[0] // 2
+    if selected in _GAIN_PRETTY:
+        _text(frame, f"{_GAIN_PRETTY[selected]}  {gains[selected]:.1f}",
+              yc, YELLOW, scale=LABEL_SCALE, align="right")
+    if not centered:
+        _text(frame, "CENTER AUX6 TO LOCK", yc + 26, RED,
+              scale=LABEL_SCALE, align="right")
 
 
 def _draw_channels(frame, channel_snapshot):

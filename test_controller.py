@@ -12,7 +12,7 @@ single most safety-critical logic in the project.
 import sys
 
 from controller import PID, TrackController
-from state import TargetState, ArmState, DisableState
+from state import TargetState, ArmState, GainState
 from config import (CH_ROLL, CH_PITCH, CH_THROTTLE, CH_AUX1, CH_AUX4,
                     CH_AUX5, CH_AUX6, CRSF_MIN, CRSF_MID, CRSF_MAX)
 
@@ -34,8 +34,8 @@ def make_channels():
     ch[CH_ROLL] = 1700
     ch[CH_PITCH] = 300
     ch[CH_THROTTLE] = 500
-    ch[CH_AUX4] = 777    # free channel - must pass straight through
-    ch[CH_AUX6] = 1234   # free channel - must pass straight through
+    ch[CH_AUX4] = 777    # gain-tuner selector - controller passes it through
+    ch[CH_AUX6] = 1234   # gain-tuner wheel - controller passes it through
     return ch
 
 
@@ -58,18 +58,29 @@ check("integral clamps at i_max, not the raw accumulated value",
 pid3.reset()
 check("reset() zeroes the integral", pid3._integral == 0.0)
 
+# Ki=0 must NOT let the accumulator wind up (it would kick when Ki is
+# later dialled up live from the tuning wheel).
+pid4 = PID(kp=1.0, ki=0.0, kd=0.0, i_max=100.0)
+for _ in range(20):
+    pid4.update(error=1.0, rate=0.0, dt=0.1)
+check("Ki=0 -> integral stays parked at 0", pid4._integral == 0.0)
+pid4.ki = 5.0   # simulate the wheel raising Ki
+out4 = pid4.update(error=1.0, rate=0.0, dt=0.1)
+check("raising Ki live -> integral starts fresh, no accumulated kick",
+     abs(out4 - (1.0 * 1.0 + 5.0 * (1.0 * 0.1))) < 1e-9)
 
-def new_controller(with_disable=False):
-    """with_disable=False matches the constructor's own default
-    (disable_state=None) - the "kill switch not wired up" case, which
-    must mean DISABLED can never trigger. with_disable=True additionally
-    returns the DisableState so a test can simulate main_ai.py's
-    tracker.DisableLatch firing."""
+
+def new_controller(with_gains=False):
+    """with_gains=False matches the constructor's own default
+    (gain_state=None) - the PIDs keep the config-default gains baked in
+    at construction. with_gains=True additionally returns a GainState so
+    a test can push live gains the way main_ai.py's tracker.GainTuner
+    does."""
     target = TargetState()
     arm = ArmState()
-    disable = DisableState() if with_disable else None
-    c = TrackController(target, arm, disable)
-    return (c, target, arm, disable) if with_disable else (c, target, arm)
+    gain = GainState() if with_gains else None
+    c = TrackController(target, arm, gain)
+    return (c, target, arm, gain) if with_gains else (c, target, arm)
 
 
 print("\nTrackController - not armed")
@@ -78,11 +89,11 @@ out = c.apply(make_channels())
 check("pilot has full manual control on roll/pitch/throttle",
      out[CH_ROLL] == 1700 and out[CH_PITCH] == 300 and out[CH_THROTTLE] == 500)
 check("Aux5 neutralised even when not armed", out[CH_AUX5] == CRSF_MID)
-check("Aux4 passes straight through (GPS rescue removed - free channel)",
+check("Aux4 (tuner selector) passes straight through to the FC",
      out[CH_AUX4] == 777)
-check("Aux6 passes straight through (zoom logic removed - free channel)",
+check("Aux6 (tuner wheel) passes straight through to the FC",
      out[CH_AUX6] == 1234)
-check("Aux1 forced low (not a raw passthrough) when not armed and not locked",
+check("Aux1 forced low (not a raw passthrough) when not armed",
      out[CH_AUX1] == CRSF_MIN)
 
 # The raw Aux1 value on the input side must have NO bearing on the output -
@@ -93,35 +104,25 @@ out = c.apply(ch_high_aux)
 check("raw Aux1=high input is ignored while not armed", out[CH_AUX1] == CRSF_MIN)
 
 
-print("\nTrackController - CH5 mirrors LOCKED live, before ARMED")
+print("\nTrackController - CH5 follows ARMED only (no LOCKED mirror on this branch)")
 c, target, arm = new_controller()
 target.publish(ex=0.1, ey=0.1, ex_rate=0.0, ey_rate=0.0)   # LOCKED, not armed
 out = c.apply(make_channels())
-check("CH5 goes high on LOCKED alone, with no arm switch involved at all",
-     out[CH_AUX1] == CRSF_MAX)
-check("pilot still has full manual roll/pitch/throttle - LOCKED alone "
-     "doesn't engage tracking, only CH5 changes",
+check("CH5 stays LOW on LOCKED alone - arming still needs the Aux1 latch",
+     out[CH_AUX1] == CRSF_MIN)
+check("pilot keeps full manual roll/pitch/throttle while only LOCKED",
      out[CH_ROLL] == 1700 and out[CH_PITCH] == 300 and out[CH_THROTTLE] == 500)
 
-target.invalidate()   # lock lost - unlike ARMED, this is NOT one-way
+arm.set(True)
 out = c.apply(make_channels())
-check("CH5 drops back low the instant LOCKED is lost, pre-arm",
+check("CH5 goes HIGH once ARMED", out[CH_AUX1] == CRSF_MAX)
+
+arm.set(False)   # pilot lowered Aux1 - on this branch that disarms
+out = c.apply(make_channels())
+check("CH5 drops back LOW when disarmed - not one-way",
      out[CH_AUX1] == CRSF_MIN)
-
-target.publish(ex=0.1, ey=0.1, ex_rate=0.0, ey_rate=0.0)   # re-lock
-out = c.apply(make_channels())
-check("CH5 goes back high on re-lock - freely retestable, unlike ARMED",
-     out[CH_AUX1] == CRSF_MAX)
-
-target.invalidate()
-arm.set(True)   # now actually armed, with no lock at the moment it fires
-out = c.apply(make_channels())
-check("CH5 stays high once ARMED, even though LOCKED is false right now",
-     out[CH_AUX1] == CRSF_MAX)
-out = c.apply(make_channels())
-check("CH5 stays high on a later call with LOCKED still false - ARMED "
-     "is sticky regardless of LOCKED afterward",
-     out[CH_AUX1] == CRSF_MAX)
+check("roll/pitch return to full pilot passthrough after disarm",
+     out[CH_ROLL] == 1700 and out[CH_PITCH] == 300)
 
 
 print("\nTrackController - ARMED, SEARCHING (no target)")
@@ -131,8 +132,7 @@ out = c.apply(make_channels())
 check("Aux1 forced high once armed", out[CH_AUX1] == CRSF_MAX)
 check("roll neutral while searching", out[CH_ROLL] == CRSF_MID)
 check("pitch neutral while searching", out[CH_PITCH] == CRSF_MID)
-check("throttle is left as a raw pilot passthrough while searching "
-     "(no throttle automation - arming is being isolated for testing)",
+check("throttle is left as a raw pilot passthrough while searching",
      out[CH_THROTTLE] == 500)
 check("pilot's roll/pitch stick values are ignored, but throttle isn't",
      out[CH_ROLL] != 1700 and out[CH_PITCH] != 300)
@@ -155,34 +155,31 @@ check("roll/pitch are a full override, not the pilot's stick values",
      out[CH_ROLL] != 1700 and out[CH_PITCH] != 300)
 
 
-print("\nTrackController - DISABLED (bench-test kill switch)")
-c, target, arm, disable = new_controller(with_disable=True)
+print("\nTrackController - live PID gains from GainState")
+c, target, arm, gain = new_controller(with_gains=True)
 arm.set(True)
-target.publish(ex=0.5, ey=-0.3, ex_rate=0.0, ey_rate=0.0)   # strong error
-disable.set(True)   # simulates tracker.DisableLatch firing in main_ai.py
+target.publish(ex=0.5, ey=0.0, ex_rate=0.0, ey_rate=0.0)   # horizontal error only
+gain.publish(dict.fromkeys(GainState.KEYS, 0.0))            # every gain -> 0
 out = c.apply(make_channels())
-check("CH5 forced low once DISABLED, despite ARMED being true",
-     out[CH_AUX1] == CRSF_MIN)
-check("Aux5 still neutralised while DISABLED", out[CH_AUX5] == CRSF_MID)
-check("roll/pitch/throttle/Aux4/Aux6 are full pilot passthrough once "
-     "DISABLED, even with a strong locked-target error and ARMED true",
-     out[CH_ROLL] == 1700 and out[CH_PITCH] == 300 and out[CH_THROTTLE] == 500
-     and out[CH_AUX4] == 777 and out[CH_AUX6] == 1234)
+check("all gains zero -> roll collapses to centre despite a live error",
+     out[CH_ROLL] == CRSF_MID)
 
-# Nothing reverses it - not lowering arm, not a fresh target error.
-arm.set(False)
+gain.publish({**dict.fromkeys(GainState.KEYS, 0.0), "roll_kp": 400.0})
 out = c.apply(make_channels())
-check("DISABLED persists even if arm_state later goes False - "
-     "the kill switch does not depend on it once latched",
-     out[CH_AUX1] == CRSF_MIN)
+check("raising roll_kp live -> roll immediately drives off centre",
+     out[CH_ROLL] != CRSF_MID)
+check("pitch, with its gains still zero, stays centred",
+     out[CH_PITCH] == CRSF_MID)
 
-print("\nTrackController - disable_state=None means DISABLED can never fire")
-c, target, arm = new_controller()   # disable_state=None, the default
+
+print("\nTrackController - gain_state=None keeps the config defaults")
+c, target, arm = new_controller()   # gain_state=None, the default
 arm.set(True)
 target.publish(ex=0.5, ey=-0.3, ex_rate=0.0, ey_rate=0.0)
 out = c.apply(make_channels())
-check("armed+tracking behaves exactly as if the kill switch didn't exist",
-     out[CH_AUX1] == CRSF_MAX and out[CH_ROLL] != CRSF_MID)
+check("armed+tracking still drives roll/pitch on the baked-in gains",
+     out[CH_AUX1] == CRSF_MAX and out[CH_ROLL] != CRSF_MID
+     and out[CH_PITCH] != CRSF_MID)
 
 
 print("\nTrackController - stale target counts as no target")

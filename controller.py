@@ -48,8 +48,15 @@ class PID:
         self._integral = 0.0
 
     def update(self, error, rate, dt):
-        self._integral = clamp(self._integral + error * dt,
-                               -self.i_max, self.i_max)
+        # Only integrate while Ki is actually in use. Gains are live-tuned
+        # (GainState), and Ki starts at 0 - without this, the accumulator
+        # would wind up silently and then kick hard the instant Ki is
+        # dialled up from the wheel.
+        if self.ki:
+            self._integral = clamp(self._integral + error * dt,
+                                   -self.i_max, self.i_max)
+        else:
+            self._integral = 0.0
         return self.kp * error + self.ki * self._integral + self.kd * rate
 
     def reset(self):
@@ -83,26 +90,23 @@ class TrackController:
 
     There is no manual "AI enable" channel - ARMED (tracker.ArmLatch,
     itself gated by LOCKED-first, see main_ai.py) is the sole top-level
-    gate, and once armed there is no software path back to manual
-    roll/pitch control short of restarting the script.
+    gate on roll/pitch tracking.
 
-    CH5 (the arm channel forwarded to the FC) is high whenever ARMED OR
-    LOCKED - see the CH5 comment in apply(). This is a bench-testing
-    convenience: LOCKED (Aux5) is freely toggleable, unlike ARMED, so it
-    gives a CH5 signal you can raise/lower repeatedly without restarting
-    the script. It also means the FC gets an arm request the moment a
-    lock is acquired, not only on the pilot's own Aux1 edge.
+    CH5 (the arm channel forwarded to the FC) is high exactly while
+    ARMED and low otherwise. On this static-testing branch ArmLatch is
+    not one-way: lowering the pilot's Aux1 disarms, which drops CH5 and
+    disarms the FC, ready for the next tuning pass.
 
-    DISABLED (tracker.DisableLatch, one-way, bench-testing kill switch -
-    triggers when Aux1 reads low while ARMED) overrides all of the above:
-    CH5 is forced low and nothing else in apply() runs, for the rest of
-    this run.
+    PID gains are read live from GainState every frame (fed by
+    tracker.GainTuner in main_ai.py), so Kp/Ki/Kd can be dialled in from
+    the transmitter while tracking. gain_state=None keeps the config
+    defaults baked into the PIDs at construction.
     """
 
-    def __init__(self, target_state, arm_state, disable_state=None):
+    def __init__(self, target_state, arm_state, gain_state=None):
         self.target = target_state
         self.arm_state = arm_state
-        self.disable_state = disable_state
+        self.gain_state = gain_state
         self.roll_pid = PID(ROLL_KP, ROLL_KI, ROLL_KD, ROLL_I_MAX)
         self.pitch_pid = PID(PITCH_KP, PITCH_KI, PITCH_KD, PITCH_I_MAX)
         self._prev_t = time.monotonic()
@@ -115,40 +119,20 @@ class TrackController:
         for aux_ch in REPURPOSED_CHANNELS:
             _set_channel(channels, aux_ch, CRSF_MID)
 
-        # DISABLED - bench-test kill switch (tracker.DisableLatch, one-way,
-        # driven from main_ai.py once Aux1 reads low while ARMED).
-        # Overrides everything below: CH5 forced low (disarms the FC) and
-        # nothing else in this function runs from here on - full pilot
-        # passthrough on roll/pitch/throttle, exactly like "not armed".
-        # disable_state=None (not wired up) means this never triggers,
-        # same as if the feature didn't exist. Nothing clears this short
-        # of restarting main_ai.py.
-        if self.disable_state is not None and self.disable_state.get():
-            _set_channel(channels, CH_AUX1, CRSF_MIN)
-            self.roll_pid.reset()
-            self.pitch_pid.reset()
-            return channels
-
         armed = self.arm_state.get()
         now = time.monotonic()
         ex, ey, ex_rate, ey_rate, locked, stamp = self.target.snapshot()
         fresh = (now - stamp) <= VISION_TIMEOUT
         is_locked_now = locked and fresh
 
-        # Aux1/CH5 is the arm channel forwarded to the FC - it has NO
-        # direct connection to the pilot's raw Aux1 value at all. Before
-        # ARMED, CH5 mirrors LOCKED live: high whenever a target is
-        # currently locked (Aux5) with a fresh measurement, low the
-        # instant it isn't - a bench-testing aid, since unlike ARMED,
-        # LOCKED isn't a one-way latch, so toggling Aux5 gives a freely
-        # retestable CH5 signal without restarting the script. NOTE: this
-        # means the FC receives an arm request as soon as a lock is
-        # acquired, independent of the pilot's own Aux1 switch position.
-        # Once ARMED fires (tracker.ArmLatch, one-way, requires an Aux1
-        # edge while already locked - see main_ai.py), CH5 stays high
-        # forever regardless of LOCKED afterward, same as before.
-        _set_channel(channels, CH_AUX1,
-                    CRSF_MAX if (armed or is_locked_now) else CRSF_MIN)
+        # Aux1/CH5 is the arm channel forwarded to the FC - never a raw
+        # passthrough of the pilot's switch. It is high exactly while
+        # ARMED and low otherwise. ArmLatch (see main_ai.py) needs a
+        # LOCKED target before the pilot's Aux1 edge counts, and on this
+        # static-testing branch lowering Aux1 disarms again - so CH5
+        # follows the pilot's Aux1 one-for-one once a lock exists,
+        # dropping the moment they lower it, ready for the next pass.
+        _set_channel(channels, CH_AUX1, CRSF_MAX if armed else CRSF_MIN)
 
         dt = max(now - self._prev_t, 1e-3)
         self._prev_t = now
@@ -175,7 +159,15 @@ class TrackController:
             return channels
 
         # ARMED with a fresh, locked target - active tracking. Throttle
-        # is still left alone (raw pilot passthrough).
+        # is still left alone (raw pilot passthrough). Pull the latest
+        # Kp/Ki/Kd from the bench tuner just before using them, so a
+        # wheel adjustment this frame takes effect this frame.
+        if self.gain_state is not None:
+            self.roll_pid.kp, self.roll_pid.ki, self.roll_pid.kd = \
+                self.gain_state.roll()
+            self.pitch_pid.kp, self.pitch_pid.ki, self.pitch_pid.kd = \
+                self.gain_state.pitch()
+
         roll_out = 0.0
         if abs(ex) > DEADZONE:
             roll_out = ROLL_SIGN * self.roll_pid.update(ex, ex_rate, dt)

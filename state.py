@@ -9,6 +9,8 @@ Nothing else should touch the private fields.
 import threading
 import time
 
+from config import ROLL_KP, ROLL_KI, ROLL_KD, PITCH_KP, PITCH_KI, PITCH_KD
+
 
 class TargetState:
     def __init__(self):
@@ -71,8 +73,8 @@ class ChannelState:
 
 
 class _BoolFlag:
-    """Thread-safe boolean flag - the shared shape behind ArmState and
-    DisableState below, which differ only in what the flag means."""
+    """Thread-safe boolean flag - the shared shape behind ArmState
+    below (kept as a base class so more flag-shaped state can reuse it)."""
 
     def __init__(self):
         self._lock = threading.Lock()
@@ -96,13 +98,50 @@ class ArmState(_BoolFlag):
     """
 
 
-class DisableState(_BoolFlag):
-    """Thread-safe boolean flag for the DISABLED kill-switch latch.
+class GainState:
+    """Thread-safe handoff of the six live PID gains from the tuning
+    loop to the control law.
 
-    The vision/main thread calls set() whenever tracker.DisableLatch's
-    decision changes. The bridge thread calls get() every RC frame to
-    decide whether to force CH5 low and stop driving anything else.
+    The vision/main thread (tracker.GainTuner) calls publish() every
+    frame with the current gains. The bridge thread
+    (controller.TrackController) calls roll() / pitch() just before each
+    PID update. Starts at the config defaults so the controller always
+    has sane gains even before the first publish().
     """
+
+    KEYS = ("roll_kp", "roll_ki", "roll_kd",
+            "pitch_kp", "pitch_ki", "pitch_kd")
+
+    _DEFAULTS = {
+        "roll_kp": ROLL_KP, "roll_ki": ROLL_KI, "roll_kd": ROLL_KD,
+        "pitch_kp": PITCH_KP, "pitch_ki": PITCH_KI, "pitch_kd": PITCH_KD,
+    }
+
+    def __init__(self):
+        self._lock = threading.Lock()
+        self._g = dict(self._DEFAULTS)
+
+    def publish(self, gains):
+        """gains is a dict with (at least) the six KEYS."""
+        with self._lock:
+            for k in self.KEYS:
+                if k in gains:
+                    self._g[k] = float(gains[k])
+
+    def snapshot(self):
+        """Returns a plain dict copy of all six gains."""
+        with self._lock:
+            return dict(self._g)
+
+    def roll(self):
+        """Returns (kp, ki, kd) for the roll axis."""
+        with self._lock:
+            return self._g["roll_kp"], self._g["roll_ki"], self._g["roll_kd"]
+
+    def pitch(self):
+        """Returns (kp, ki, kd) for the pitch axis."""
+        with self._lock:
+            return self._g["pitch_kp"], self._g["pitch_ki"], self._g["pitch_kd"]
 
 
 class Stats:

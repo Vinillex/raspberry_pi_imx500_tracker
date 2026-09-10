@@ -45,17 +45,19 @@ CH_PITCH = 1
 CH_THROTTLE = 2
 CH_YAW = 3
 CH_AUX1 = 4    # repurposed as the arm channel - see ARM_CH_MIN below;
-               # forced high once ARMED latches, OR live while LOCKED
-               # (Aux5) pre-arm - see TrackController.apply(); never a
-               # raw passthrough of the pilot's switch
-CH_AUX2 = 5    # free channel - passes straight through to the FC
-CH_AUX3 = 6    # free channel - passes straight through to the FC
-CH_AUX4 = 7    # free channel - passes straight through to the FC (was the
-               # GPS-rescue trigger; that logic has been removed)
+               # high exactly while ARMED, low otherwise (static-testing:
+               # lowering Aux1 disarms) - see TrackController.apply();
+               # never a raw passthrough of the pilot's switch
+CH_AUX2 = 5    # static-testing: 3-pos gain selector for the ROLL axis
+               # (low/mid/high -> Kp/Ki/Kd); also passes through to the FC
+CH_AUX3 = 6    # static-testing: 3-pos gain selector for the PITCH axis
+               # (low/mid/high -> Kp/Ki/Kd); also passes through to the FC
+CH_AUX4 = 7    # static-testing: axis selector (low -> roll, high -> pitch)
+               # for the gain tuner; also passes through to the FC
 CH_AUX5 = 8    # repurposed as the detection-lock switch - see LOCK_CH_MIN below;
                # never forwarded to the FC (controller.py neutralises it)
-CH_AUX6 = 9    # free channel - passes straight through to the FC (was the
-               # camera-zoom control; zoom logic has been removed)
+CH_AUX6 = 9    # static-testing: spring-return scroll wheel that ramps the
+               # selected PID gain up/down; also passes through to the FC
 
 CH_NAMES = ["Roll", "Pitch", "Thr", "Yaw",
             "Aux1", "Aux2", "Aux3", "Aux4",
@@ -98,6 +100,36 @@ FPS_ALPHA = 0.1                # EMA smoothing on the displayed frame rate
 
 ROLL_SIGN = +1                 # flip if corrections push the wrong way
 PITCH_SIGN = +1
+
+# --------------------------------------------------------------------------
+# Live PID gain tuning (static-testing branch)
+#   tracker.GainTuner + state.GainState + overlay._draw_gains
+# --------------------------------------------------------------------------
+# Bench workflow, all from the transmitter:
+#   - Aux4 picks the axis:  low -> roll, high -> pitch
+#   - Aux2 (roll) / Aux3 (pitch) are 3-position switches picking the gain:
+#       low -> Kp, mid -> Ki, high -> Kd
+#   - Aux6 is a spring-return scroll wheel: held forward it ramps the
+#     selected gain up, held back ramps it down, centred it holds.
+# Tuned values persist across arm/disarm cycles; restarting the script
+# resets them to the ROLL_*/PITCH_* defaults above.
+AUX_LOW_MAX = 700              # CRSF value at or below this = switch "low"
+AUX_HIGH_MIN = 1300            # CRSF value at or above this = switch "high"
+                               # (between the two = "mid", for Aux2/Aux3)
+AUX6_DEADBAND = 0.06           # |wheel deflection|, as a fraction of full
+                               # throw, below which the wheel counts as
+                               # centred: no ramp, and the interlock that
+                               # must be satisfied before Aux5 can lock
+
+# Per-gain tuning envelope: (min, max, units-per-second at full Aux6 throw)
+GAIN_LIMITS = {
+    "roll_kp":  (0.0, 800.0, 100.0),
+    "roll_ki":  (0.0, 300.0,  30.0),
+    "roll_kd":  (0.0, 400.0,  50.0),
+    "pitch_kp": (0.0, 800.0, 100.0),
+    "pitch_ki": (0.0, 300.0,  30.0),
+    "pitch_kd": (0.0, 400.0,  50.0),
+}
 
 # --------------------------------------------------------------------------
 # Vision
