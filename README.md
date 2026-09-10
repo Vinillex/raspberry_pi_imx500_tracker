@@ -144,10 +144,13 @@ selected gain up, back to ramp it down, release (centre) to hold. Per-gain
 ranges and ramp rates are `GAIN_LIMITS` in `config.py`. Tuned values
 persist across arm/disarm cycles; restarting `main_ai.py` resets them.
 
-- **Aux5 will not lock until Aux6 is centred** — an interlock so a gain
-  can't be ramping while you set up the lock/arm sequence. The overlay
-  shows `CENTER AUX6 TO LOCK` across the frame centre while the wheel is
-  off centre.
+- **The wheel only adjusts while ARMED.** In DETECTING you use
+  Aux2/Aux3/Aux4 to *pick* which gain you'll tune; Aux6 does nothing
+  until you're armed and tracking.
+- **Aux5 will not lock until Aux6 is centred** — an interlock so the
+  wheel is neutral at the moment you arm (otherwise it would start
+  ramping hard immediately). The overlay shows `CENTER AUX6 TO LOCK`
+  across the frame centre while the wheel is off centre.
 - In the **DETECTING** state the overlay shows all six current gains
   top-right, the selected one flagged `>` in yellow (name + value). Once
   locked or armed the panel hides — disarm to read the new value.
@@ -178,8 +181,8 @@ screen, not by watching Betaflight's Receiver tab live.
   sticks and are driven by the PID (CH3 unchanged). The correction should
   be *corrective* (step right → bars move the way that re-centres you) —
   backwards means flip `ROLL_SIGN` / `PITCH_SIGN` in `config.py`.
-- Scroll Aux6 forward/back → the selected gain ramps; watch the tracking
-  response change.
+- Now armed → scroll Aux6 forward/back → the selected gain ramps (the
+  wheel is inert until this point); watch the tracking response change.
 - Losing the target (SEARCHING) → CH1/CH2 recentre; still armed.
 - **Lower Aux1 → disarm**: CH5 snaps low (disarms the FC), CH1/CH2 return
   to the sticks, PID integrators reset. The gain keeps its new value.

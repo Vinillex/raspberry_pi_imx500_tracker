@@ -149,11 +149,15 @@ class ArmLatch:
 class GainTuner:
     """Live PID-gain tuning for static bench testing (this branch only).
 
-    Selection: Aux4 chooses the axis (low -> roll, high -> pitch); Aux2
-    (roll) or Aux3 (pitch) is a 3-position switch choosing Kp / Ki / Kd.
-    Adjustment: Aux6 is a spring-return scroll wheel - held forward it
-    ramps the selected gain up, held back ramps it down, centred it
-    holds. Per-gain rates and limits come from config.GAIN_LIMITS.
+    Selection (any state): Aux4 chooses the axis (low -> roll, high ->
+    pitch); Aux2 (roll) or Aux3 (pitch) is a 3-position switch choosing
+    Kp / Ki / Kd. In DETECTING you only select - the wheel does nothing.
+
+    Adjustment (ARMED only): Aux6 is a spring-return scroll wheel - held
+    forward it ramps the selected gain up, held back ramps it down,
+    centred it holds. Per-gain rates and limits come from
+    config.GAIN_LIMITS. Pass allow_ramp=False (i.e. not armed) and
+    update() tracks the selection but leaves every value untouched.
 
     Tuned values persist across arm/disarm cycles; only recreating this
     object (restarting the script) resets them to the config defaults.
@@ -194,13 +198,15 @@ class GainTuner:
         knob = aux3 if axis == "pitch" else aux2
         return f"{axis}_{self._GAIN_BY_POS[self._switch3(knob)]}"
 
-    def update(self, aux2, aux3, aux4, aux6, dt):
-        """Ramp the selected gain by the wheel position over `dt` seconds.
+    def update(self, aux2, aux3, aux4, aux6, dt, allow_ramp=True):
+        """Track the switch selection; ramp the selected gain by the
+        wheel position over `dt` seconds only when allow_ramp is True
+        (ARMED). In DETECTING (allow_ramp=False) the wheel is inert.
         Returns (gains_dict, selected_name, centred)."""
         name = self.selected(aux2, aux3, aux4)
         d = self.deflection(aux6)
         centred = abs(d) <= AUX6_DEADBAND
-        if not centred:
+        if allow_ramp and not centred:
             lo, hi, rate = GAIN_LIMITS[name]
             stepped = self._g[name] + d * rate * dt
             self._g[name] = max(lo, min(hi, stepped))

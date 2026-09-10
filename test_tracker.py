@@ -133,6 +133,20 @@ g, _, _ = gt.update(LOW, MID, LOW, CRSF_MAX, 0.5)           # half the time
 check("ramp scales with dt", abs(g["roll_kp"] - (start + 0.5 * rate)) < 1e-6)
 
 
+print("\nGainTuner - allow_ramp=False (DETECTING): select only, never adjust")
+gt = GainTuner()
+held = gt.gains["roll_kd"]
+for _ in range(50):
+    g, name, centred = gt.update(HIGH, MID, LOW, CRSF_MAX, 1.0, allow_ramp=False)
+check("selection still tracked while ramping is disabled", name == "roll_kd")
+check("wheel deflection still reported", centred is False)
+check("gain value is left completely untouched", g["roll_kd"] == held)
+# and it starts ramping again the moment ramping is re-enabled (ARMED)
+g, _, _ = gt.update(HIGH, MID, LOW, CRSF_MAX, 1.0, allow_ramp=True)
+_, _, r = GAIN_LIMITS["roll_kd"]
+check("re-enabling ramp resumes adjustment", g["roll_kd"] == held + r)
+
+
 print("\nGainTuner - centre deadband holds the value")
 gt = GainTuner()
 before = gt.gains["roll_ki"]
