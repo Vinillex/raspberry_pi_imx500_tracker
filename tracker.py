@@ -14,7 +14,7 @@ import time
 
 from config import (MAIN_SIZE, MATCH_RADIUS_FRAC, RATE_ALPHA,
                     AUX_LOW_MAX, AUX_HIGH_MIN, AUX6_DEADBAND, GAIN_LIMITS,
-                    CRSF_MID, CRSF_MAX,
+                    CRSF_MIN, CRSF_MID, CRSF_MAX,
                     ROLL_KP, ROLL_KI, ROLL_KD, PITCH_KP, PITCH_KI, PITCH_KD)
 from vision import box_center, nearest_idx
 
@@ -153,11 +153,14 @@ class GainTuner:
     pitch); Aux2 (roll) or Aux3 (pitch) is a 3-position switch choosing
     Kp / Ki / Kd. In DETECTING you only select - the wheel does nothing.
 
-    Adjustment (ARMED only): Aux6 is a spring-return scroll wheel - held
-    forward it ramps the selected gain up, held back ramps it down,
-    centred it holds. Per-gain rates and limits come from
-    config.GAIN_LIMITS. Pass allow_ramp=False (i.e. not armed) and
-    update() tracks the selection but leaves every value untouched.
+    Adjustment (ARMED only): Aux6 is the scroll wheel, used as a RELATIVE
+    control - only how far you turn it matters, not where it sits. Turn
+    forward and the selected gain climbs; turn back past where you
+    started and it drops; stop anywhere and the value holds there. The
+    wheel's position while disarmed is absorbed (no jump on re-arm), so
+    the normal flow is: tune -> disarm to commit -> re-centre the wheel
+    -> re-arm and keep going from the new value. config.GAIN_LIMITS gives
+    the per-gain min/max and how much a full wheel sweep moves it.
 
     Tuned values persist across arm/disarm cycles; only recreating this
     object (restarting the script) resets them to the config defaults.
@@ -167,6 +170,7 @@ class GainTuner:
     """
 
     _GAIN_BY_POS = ("kp", "ki", "kd")
+    _WHEEL_SPAN = CRSF_MAX - CRSF_MIN   # full Aux6 travel, in CRSF counts
 
     def __init__(self):
         self._g = {
@@ -174,6 +178,8 @@ class GainTuner:
             "roll_kd": float(ROLL_KD), "pitch_kp": float(PITCH_KP),
             "pitch_ki": float(PITCH_KI), "pitch_kd": float(PITCH_KD),
         }
+        self._wheel = None   # last seen Aux6 position; None until first update
+        self._sel = None     # last selected gain name
 
     @staticmethod
     def _switch3(value):
@@ -198,18 +204,26 @@ class GainTuner:
         knob = aux3 if axis == "pitch" else aux2
         return f"{axis}_{self._GAIN_BY_POS[self._switch3(knob)]}"
 
-    def update(self, aux2, aux3, aux4, aux6, dt, allow_ramp=True):
-        """Track the switch selection; ramp the selected gain by the
-        wheel position over `dt` seconds only when allow_ramp is True
-        (ARMED). In DETECTING (allow_ramp=False) the wheel is inert.
+    def update(self, aux2, aux3, aux4, aux6, allow_ramp=True):
+        """Track the switch selection always; when allow_ramp is True
+        (ARMED), move the selected gain by how far the wheel has turned
+        since the last call. Wheel movement while allow_ramp is False
+        (DETECTING) only re-anchors, so re-arming never jumps the value.
         Returns (gains_dict, selected_name, centred)."""
         name = self.selected(aux2, aux3, aux4)
-        d = self.deflection(aux6)
-        centred = abs(d) <= AUX6_DEADBAND
-        if allow_ramp and not centred:
-            lo, hi, rate = GAIN_LIMITS[name]
-            stepped = self._g[name] + d * rate * dt
+        centred = abs(self.deflection(aux6)) <= AUX6_DEADBAND
+
+        if self._wheel is None:
+            self._wheel = aux6
+        move = aux6 - self._wheel
+        self._wheel = aux6
+
+        if allow_ramp and move and name == self._sel:
+            lo, hi, span = GAIN_LIMITS[name]
+            stepped = self._g[name] + move / self._WHEEL_SPAN * span
             self._g[name] = max(lo, min(hi, stepped))
+
+        self._sel = name
         return dict(self._g), name, centred
 
     @property

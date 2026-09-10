@@ -139,18 +139,25 @@ transmitter:
 | Ki Pitch | Aux3 mid,  Aux4 high |
 | Kd Pitch | Aux3 high, Aux4 high |
 
-**Aux6 is a spring-return scroll wheel**: hold it forward to ramp the
-selected gain up, back to ramp it down, release (centre) to hold. Per-gain
-ranges and ramp rates are `GAIN_LIMITS` in `config.py`. Tuned values
-persist across arm/disarm cycles; restarting `main_ai.py` resets them.
+**Aux6 is the scroll wheel, used as a _relative_ control** — only how far
+you turn it matters, not where it sits. Turn forward → the selected gain
+climbs; turn back past where you started → it drops; stop anywhere → it
+holds there. `GAIN_LIMITS` in `config.py` gives each gain's min/max and
+how much a full wheel sweep moves it. Tuned values persist across
+arm/disarm cycles; restarting `main_ai.py` resets them.
 
 - **The wheel only adjusts while ARMED.** In DETECTING you use
   Aux2/Aux3/Aux4 to *pick* which gain you'll tune; Aux6 does nothing
   until you're armed and tracking.
-- **Aux5 will not lock until Aux6 is centred** — an interlock so the
-  wheel is neutral at the moment you arm (otherwise it would start
-  ramping hard immediately). The overlay shows `CENTER AUX6 TO LOCK`
-  across the frame centre while the wheel is off centre.
+- **Wheel movement while disarmed is absorbed** — re-arming never jumps
+  the value. So the loop for a big change is: turn the wheel to move the
+  gain → disarm (that "commits" the value) → re-centre the wheel → re-arm
+  and keep turning from where you left off. The committed value is now
+  what "wheel centred" means.
+- **Aux5 will not lock until Aux6 is centred** — an interlock that forces
+  the re-centre step above, and gives you full wheel travel each session.
+  The overlay shows `CENTER AUX6 TO LOCK` across the frame centre while
+  the wheel is off centre.
 - Overlay: in **DETECTING** the top-right panel lists all six gains, the
   selected one flagged `>` in yellow. While **ARMED** it collapses to a
   single yellow line — the selected gain's name and its live value —
@@ -158,8 +165,9 @@ persist across arm/disarm cycles; restarting `main_ai.py` resets them.
   between (locked, not yet armed).
 
 Typical loop: pick the gain (Aux2/3/4) → centre Aux6 → raise Aux5 to lock
-→ raise Aux1 to arm → scroll Aux6 while watching the tracking response →
-lower Aux1 to disarm → repeat for the next gain.
+→ raise Aux1 to arm → turn Aux6 while watching the tracking response →
+lower Aux1 to disarm (commits the value) → re-centre Aux6 → repeat, for
+this gain or the next one.
 
 ## Bench test before flying
 
@@ -184,8 +192,11 @@ screen, not by watching Betaflight's Receiver tab live.
   be *corrective* (step right → bars move the way that re-centres you) —
   backwards means flip `ROLL_SIGN` / `PITCH_SIGN` in `config.py`.
 - Now armed → the top-right readout collapses to the selected gain's
-  live value. Scroll Aux6 forward/back → it ramps (the wheel is inert
-  until this point); watch the value and the tracking response change.
+  live value. Turn Aux6 forward/back → the value moves with the wheel
+  (inert until this point); stop and it holds. Watch the tracking
+  response change.
+- Lower Aux1 to disarm (commits the value), re-centre Aux6, raise Aux1
+  to carry on from the committed value.
 - Losing the target (SEARCHING) → CH1/CH2 recentre; still armed.
 - **Lower Aux1 → disarm**: CH5 snaps low (disarms the FC), CH1/CH2 return
   to the sticks, PID integrators reset. The gain keeps its new value.

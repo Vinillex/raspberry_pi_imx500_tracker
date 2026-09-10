@@ -13,8 +13,8 @@ LOCKED first), and controller.py takes over roll/pitch entirely once
 armed - see README.md's "Safety gates" section. On this static-testing
 branch arming is not one-way: lowering Aux1 disarms (drops CH5, disarms
 the FC), ready for the next tuning pass. Aux2/Aux3/Aux4 select a PID
-gain (any state) and Aux6 (a spring-return wheel) ramps it live while
-ARMED - see tracker.GainTuner.
+gain (any state) and Aux6 (scroll wheel, relative) moves it while ARMED
+- see tracker.GainTuner.
 
     python3 main_ai.py
     python3 main_ai.py --no-display
@@ -134,8 +134,8 @@ def main():
             input_ch, output_ch, stamp = channel_state.snapshot()
             fresh = input_ch is not None and time.monotonic() - stamp <= RC_TIMEOUT
 
-            # Aux2/Aux3/Aux4 select a PID gain (any state); Aux6
-            # (spring-return wheel) ramps it, but only while ARMED - in
+            # Aux2/Aux3/Aux4 select a PID gain (any state); Aux6 (scroll
+            # wheel, relative) moves it, but only while ARMED - in
             # DETECTING you just pick the gain. `armed` here is last
             # frame's value (recomputed below); a one-frame lag on the
             # wheel going live is imperceptible. Fall back to neutral
@@ -145,7 +145,7 @@ def main():
             aux4 = input_ch[CH_AUX4] if fresh else CRSF_MIN
             aux6 = input_ch[CH_AUX6] if fresh else CRSF_MID
             gains, selected_gain, aux6_centered = gain_tuner.update(
-                aux2, aux3, aux4, aux6, dt, allow_ramp=armed)
+                aux2, aux3, aux4, aux6, allow_ramp=armed)
             gain_state.publish(gains)
 
             aux1_high = fresh and input_ch[ARM_CH] >= ARM_CH_MIN

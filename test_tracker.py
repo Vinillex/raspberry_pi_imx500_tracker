@@ -115,69 +115,109 @@ check("full back -> -1.0 (clamped)", GainTuner.deflection(CRSF_MIN) == -1.0)
 check("beyond range clamps to +1.0", GainTuner.deflection(9999) == 1.0)
 
 
-print("\nGainTuner - ramping the selected gain")
+HALF_SWEEP_FRAC = (CRSF_MAX - CRSF_MID) / (CRSF_MAX - CRSF_MIN)   # centre -> full
+
+
+print("\nGainTuner - Aux6 is a relative control (only movement counts)")
 gt = GainTuner()
-lo, hi, rate = GAIN_LIMITS["roll_kp"]
+lo, hi, span = GAIN_LIMITS["roll_kp"]
 start = gt.gains["roll_kp"]
-g, name, centred = gt.update(LOW, MID, LOW, CRSF_MAX, 1.0)   # full forward, 1 s
-check("reports the selected gain name", name == "roll_kp")
-check("full throw -> not centred", centred is False)
-check("full-forward for 1 s ramps roll_kp up by ~rate",
-     abs(g["roll_kp"] - (start + rate)) < 1e-6)
-check("untouched gains keep their defaults",
-     g["pitch_kd"] == GainTuner().gains["pitch_kd"])
-g, _, _ = gt.update(LOW, MID, LOW, CRSF_MIN, 1.0)           # full back, 1 s
-check("full-back for 1 s ramps roll_kp back down by ~rate",
+g, name, _ = gt.update(LOW, MID, LOW, CRSF_MID)      # first call only anchors
+check("reports the selection", name == "roll_kp")
+check("first call moves nothing (no prior wheel position)",
+     g["roll_kp"] == start)
+g, _, _ = gt.update(LOW, MID, LOW, CRSF_MAX)         # centre -> full forward
+step = HALF_SWEEP_FRAC * span
+check("turning the wheel forward raises the selected gain",
+     abs(g["roll_kp"] - (start + step)) < 1e-6)
+g, _, _ = gt.update(LOW, MID, LOW, CRSF_MAX)         # hold it there
+check("holding the wheel still holds the value (not a rate control)",
+     abs(g["roll_kp"] - (start + step)) < 1e-6)
+g, _, _ = gt.update(LOW, MID, LOW, CRSF_MID)         # turn back to centre
+check("turning back the same distance undoes the change",
      abs(g["roll_kp"] - start) < 1e-6)
-g, _, _ = gt.update(LOW, MID, LOW, CRSF_MAX, 0.5)           # half the time
-check("ramp scales with dt", abs(g["roll_kp"] - (start + 0.5 * rate)) < 1e-6)
+check("untouched gains never moved",
+     g["roll_kd"] == GainTuner().gains["roll_kd"])
 
 
-print("\nGainTuner - allow_ramp=False (DETECTING): select only, never adjust")
+print("\nGainTuner - allow_ramp=False (DETECTING): select only, wheel inert")
 gt = GainTuner()
 held = gt.gains["roll_kd"]
-for _ in range(50):
-    g, name, centred = gt.update(HIGH, MID, LOW, CRSF_MAX, 1.0, allow_ramp=False)
-check("selection still tracked while ramping is disabled", name == "roll_kd")
-check("wheel deflection still reported", centred is False)
-check("gain value is left completely untouched", g["roll_kd"] == held)
-# and it starts ramping again the moment ramping is re-enabled (ARMED)
-g, _, _ = gt.update(HIGH, MID, LOW, CRSF_MAX, 1.0, allow_ramp=True)
-_, _, r = GAIN_LIMITS["roll_kd"]
-check("re-enabling ramp resumes adjustment", g["roll_kd"] == held + r)
+gt.update(HIGH, MID, LOW, CRSF_MID, allow_ramp=False)
+for pos in (1200, 1500, CRSF_MAX, 1400, CRSF_MID):        # wheel wandering
+    g, name, _ = gt.update(HIGH, MID, LOW, pos, allow_ramp=False)
+check("selection still tracked while disarmed", name == "roll_kd")
+check("wheel movement while disarmed never touches the value",
+     g["roll_kd"] == held)
 
 
-print("\nGainTuner - centre deadband holds the value")
+print("\nGainTuner - disarm commits, re-centre, re-arm continues from there")
 gt = GainTuner()
-before = gt.gains["roll_ki"]
-g, name, centred = gt.update(MID, MID, LOW, CRSF_MID, 1.0)
-check("centred wheel -> centred True", centred is True)
-check("centred wheel -> gain unchanged", g["roll_ki"] == before)
-check("selection still tracked while centred", name == "roll_ki")
+lo, hi, span = GAIN_LIMITS["roll_kd"]
+v0 = gt.gains["roll_kd"]
+step = HALF_SWEEP_FRAC * span
+gt.update(HIGH, MID, LOW, CRSF_MID, allow_ramp=True)          # arm, anchor centre
+g, _, _ = gt.update(HIGH, MID, LOW, CRSF_MAX, allow_ramp=True)   # wheel -> forward
+tuned = g["roll_kd"]
+check("wheel forward raised the gain", abs(tuned - (v0 + step)) < 1e-6)
+g, _, _ = gt.update(HIGH, MID, LOW, CRSF_MAX, allow_ramp=False)  # DISARM
+g, _, _ = gt.update(HIGH, MID, LOW, CRSF_MID, allow_ramp=False)  # re-centre wheel
+check("disarm + re-centring the wheel leave the tuned value put",
+     g["roll_kd"] == tuned)
+g, _, _ = gt.update(HIGH, MID, LOW, CRSF_MID, allow_ramp=True)   # RE-ARM, centred
+check("re-arming doesn't jump the value", g["roll_kd"] == tuned)
+g, _, _ = gt.update(HIGH, MID, LOW, CRSF_MAX, allow_ramp=True)   # wheel forward
+check("further turns continue from the tuned value, not the default",
+     abs(g["roll_kd"] - (tuned + step)) < 1e-6)
+
+
+print("\nGainTuner - centre deadband (the Aux5 lock interlock)")
+gt = GainTuner()
+_, _, centred = gt.update(MID, MID, LOW, CRSF_MID, allow_ramp=True)
+check("wheel at centre -> centred True", centred is True)
 near = CRSF_MID + int(0.03 * (CRSF_MAX - CRSF_MID))   # inside AUX6_DEADBAND
-g, _, centred = gt.update(MID, MID, LOW, near, 1.0)
-check("small off-centre within the deadband still holds",
-     centred is True and g["roll_ki"] == before)
+_, _, centred = gt.update(MID, MID, LOW, near, allow_ramp=True)
+check("small offset within the deadband -> still centred", centred is True)
+_, _, centred = gt.update(MID, MID, LOW, CRSF_MAX, allow_ramp=True)
+check("wheel turned well off centre -> not centred", centred is False)
 
 
-print("\nGainTuner - clamps to the per-gain envelope")
-gt = GainTuner()
+print("\nGainTuner - ratcheting (commit / re-centre / turn) clamps to the envelope")
 lo, hi, _ = GAIN_LIMITS["pitch_kd"]
-for _ in range(500):
-    g, _, _ = gt.update(MID, HIGH, HIGH, CRSF_MAX, 1.0)
-check("hammering the wheel up clamps at the gain's max", g["pitch_kd"] == hi)
-for _ in range(500):
-    g, _, _ = gt.update(MID, HIGH, HIGH, CRSF_MIN, 1.0)
-check("hammering it down clamps at the gain's min", g["pitch_kd"] == lo)
-
-
-print("\nGainTuner - values persist across calls and selection changes")
 gt = GainTuner()
-gt.update(LOW, MID, LOW, CRSF_MAX, 0.5)          # bump roll_kp
+for _ in range(10):
+    gt.update(MID, HIGH, HIGH, CRSF_MID, allow_ramp=False)   # re-centre (absorbed)
+    gt.update(MID, HIGH, HIGH, CRSF_MID, allow_ramp=True)    # arm, anchor centre
+    g, _, _ = gt.update(MID, HIGH, HIGH, CRSF_MAX, allow_ramp=True)   # turn up
+check("ratcheting up clamps at the gain's max", g["pitch_kd"] == hi)
+gt = GainTuner()
+for _ in range(10):
+    gt.update(MID, HIGH, HIGH, CRSF_MID, allow_ramp=False)
+    gt.update(MID, HIGH, HIGH, CRSF_MID, allow_ramp=True)
+    g, _, _ = gt.update(MID, HIGH, HIGH, CRSF_MIN, allow_ramp=True)   # turn down
+check("ratcheting down clamps at the gain's min", g["pitch_kd"] == lo)
+
+
+print("\nGainTuner - a selection change doesn't leak wheel movement")
+gt = GainTuner()
+gt.update(LOW, MID, LOW, CRSF_MID, allow_ramp=True)   # roll_kp selected + anchored
+kd0 = gt.gains["roll_kd"]
+g, name, _ = gt.update(HIGH, MID, LOW, CRSF_MAX, allow_ramp=True)   # flip + turn
+check("the frame the switch flips doesn't move the newly-selected gain",
+     name == "roll_kd" and g["roll_kd"] == kd0)
+g, _, _ = gt.update(HIGH, MID, LOW, CRSF_MID, allow_ramp=True)
+check("wheel works normally once the selection has settled",
+     g["roll_kd"] != kd0)
+
+
+print("\nGainTuner - tuned values persist for the rest of the run")
+gt = GainTuner()
+gt.update(LOW, MID, LOW, CRSF_MID, allow_ramp=True)
+gt.update(LOW, MID, LOW, 1300, allow_ramp=True)       # nudge roll_kp up
 bumped = gt.gains["roll_kp"]
-check("roll_kp stays bumped above its default", bumped > ROLL_KP)
-gt.update(MID, HIGH, HIGH, CRSF_MID, 1.0)        # switch to pitch_kd, wheel centred
-check("changing the selection doesn't disturb roll_kp",
+check("roll_kp moved off its default", bumped != ROLL_KP)
+gt.update(MID, HIGH, HIGH, CRSF_MID, allow_ramp=True)  # select pitch_kd instead
+check("selecting another gain leaves roll_kp where it was",
      gt.gains["roll_kp"] == bumped)
 
 
