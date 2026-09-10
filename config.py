@@ -81,7 +81,7 @@ THROTTLE_ARMED = CRSF_MAX                              # ARMED, actively trackin
 THROTTLE_SEARCHING = int(CRSF_MIN + 0.8 * (CRSF_MAX - CRSF_MIN))  # SEARCHING - 80%,
                                                         # no tracking
 
-ROLL_KP = 260.0                 # proportional gain (counts per unit error)
+ROLL_KP = 620.0                 # proportional gain (counts per unit error)
 ROLL_KI = 0.0                   # integral gain - starts at 0, windup-prone,
                                  # needs careful bench tuning
 ROLL_KD = 0.0                   # derivative gain - zeroed to tune pure P
