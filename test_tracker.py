@@ -205,9 +205,10 @@ kd0 = gt.gains["roll_kd"]
 g, name, _ = gt.update(HIGH, MID, LOW, CRSF_MAX, allow_ramp=True)   # flip + turn
 check("the frame the switch flips doesn't move the newly-selected gain",
      name == "roll_kd" and g["roll_kd"] == kd0)
-g, _, _ = gt.update(HIGH, MID, LOW, CRSF_MID, allow_ramp=True)
+gt.update(HIGH, MID, LOW, CRSF_MID, allow_ramp=True)   # re-anchor at centre
+g, _, _ = gt.update(HIGH, MID, LOW, CRSF_MAX, allow_ramp=True)   # now turn up
 check("wheel works normally once the selection has settled",
-     g["roll_kd"] != kd0)
+     g["roll_kd"] > kd0)
 
 
 print("\nGainTuner - tuned values persist for the rest of the run")
