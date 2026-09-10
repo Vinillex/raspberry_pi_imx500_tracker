@@ -26,17 +26,23 @@ STALE_SCALE = 0.5       # "RX: NA"
 GAIN_SCALE = 0.5        # top-right live-gain panel
 TEXT_MARGIN = 10        # px from the frame edge for right-aligned text
 
-# Row order + short labels for the live PID-gain panel (top-right, shown
-# only in the DETECTING state). Keys match tracker.GainTuner / GainState.
+# Row order + short labels for the live PID-gain panel (top-right).
+# Keys match tracker.GainTuner / GainState.
 _GAIN_ROWS = (
     ("roll_kp", "R Kp"), ("roll_ki", "R Ki"), ("roll_kd", "R Kd"),
     ("pitch_kp", "P Kp"), ("pitch_ki", "P Ki"), ("pitch_kd", "P Kd"),
 )
+_GAIN_X = -190          # top-right panel origin, from the right frame edge
+
+
+def _gain_label(key):
+    """'roll_kd' -> 'ROLL KD'."""
+    return key.replace("_", " ").upper()
 
 
 def draw(frame, box, box_color, status_text, status_color, channel_snapshot,
         error_lines=None, fps=None, gains=None, selected_gain=None,
-        aux6_centered=True):
+        gains_compact=False, aux6_centered=True):
     """Draw the subject box, status text, CRSF channel readout and (if
     given) the blocking-state labels, frame rate and live-gain panel,
     in place.
@@ -48,11 +54,13 @@ def draw(frame, box, box_color, status_text, status_color, channel_snapshot,
                       right-centre, one per line; None/empty to hide
     fps            - current frame rate, or None to hide it
     gains          - dict of the six live PID gains (GainState.snapshot())
-                      to show top-right, or None to hide the panel
-    selected_gain  - key of the gain currently being tuned (flagged '>'
-                      in the panel)
+                      to show top-right, or None to hide the readout
+    selected_gain  - key of the gain currently selected / being tuned
+    gains_compact  - False (DETECTING): all six gains, selected one
+                      flagged '>'. True (ARMED): just the selected gain +
+                      its live value, one line.
     aux6_centered  - False draws a "CENTER AUX6 TO LOCK" warning across
-                      the frame centre (only when gains is given)
+                      the frame centre (DETECTING panel only)
     """
     if box is not None:
         x, y, w, h = box
@@ -61,7 +69,7 @@ def draw(frame, box, box_color, status_text, status_color, channel_snapshot,
     _draw_status(frame, status_text, status_color)
     _draw_error(frame, error_lines)
     _draw_fps(frame, fps)
-    _draw_gains(frame, gains, selected_gain, aux6_centered)
+    _draw_gains(frame, gains, selected_gain, gains_compact, aux6_centered)
     _draw_channels(frame, channel_snapshot)
     return frame
 
@@ -96,15 +104,25 @@ def _draw_fps(frame, fps):
     cv2.putText(frame, f"{fps:.0f}", (10, 26), FONT, STATUS_SCALE, GREEN, 2)
 
 
-def _draw_gains(frame, gains, selected, centered):
-    """Top-right: the six live PID gains, one per line, the selected one
-    flagged with '>' and drawn in yellow. If Aux6 isn't centred (so Aux5
-    can't lock yet), a warning across the frame centre. Shown only in the
-    DETECTING state; hidden entirely when gains is None."""
+def _draw_gains(frame, gains, selected, compact, centered):
+    """Top-right PID-gain readout, or nothing when gains is None.
+
+    compact=True (ARMED): one line - the selected gain's name and live
+    value, so you can watch it move as you turn the wheel.
+
+    compact=False (DETECTING): all six gains, one per line, the selected
+    one flagged '>' in yellow; plus a "CENTER AUX6 TO LOCK" warning
+    across the frame centre while the wheel is off centre."""
     if not gains:
         return
 
-    x = frame.shape[1] - 175
+    if compact:
+        if selected in gains:
+            _text(frame, f"{_gain_label(selected)}  {gains[selected]:.1f}",
+                  30, YELLOW, scale=LABEL_SCALE, align="right")
+        return
+
+    x = frame.shape[1] + _GAIN_X
     y = 55
     for key, label in _GAIN_ROWS:
         sel = key == selected

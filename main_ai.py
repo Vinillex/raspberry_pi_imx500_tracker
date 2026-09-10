@@ -185,11 +185,12 @@ def main():
             box, box_color, text = select_overlay_state(
                 armed, locked_box, lock_on, is_locked, detections)
 
-            # The live-gain panel + selected-gain label show only in the
-            # DETECTING state (not armed, no lock switch) - the setup
-            # phase before you lock and arm.
+            # Gain readout: the full six-row panel while selecting
+            # (DETECTING - not armed, no lock switch), or just the
+            # selected gain + its live value while ARMED so you can watch
+            # it move. Hidden in between (locked, not yet armed).
             detecting = not armed and not lock_on
-            panel = gains if detecting else None
+            panel = gains if (detecting or armed) else None
 
             if args.no_display:
                 continue
@@ -198,7 +199,7 @@ def main():
                         (input_ch, output_ch, stamp),
                         error_lines=error_lines, fps=fps,
                         gains=panel, selected_gain=selected_gain,
-                        aux6_centered=aux6_centered)
+                        gains_compact=armed, aux6_centered=aux6_centered)
             key = overlay.show(frame)
             if key in (ord('q'), 27):   # 27 = Esc
                 break

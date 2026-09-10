@@ -151,9 +151,11 @@ persist across arm/disarm cycles; restarting `main_ai.py` resets them.
   wheel is neutral at the moment you arm (otherwise it would start
   ramping hard immediately). The overlay shows `CENTER AUX6 TO LOCK`
   across the frame centre while the wheel is off centre.
-- In the **DETECTING** state the overlay shows all six current gains
-  top-right, the selected one flagged `>` in yellow (name + value). Once
-  locked or armed the panel hides — disarm to read the new value.
+- Overlay: in **DETECTING** the top-right panel lists all six gains, the
+  selected one flagged `>` in yellow. While **ARMED** it collapses to a
+  single yellow line — the selected gain's name and its live value —
+  top-right, so you can watch it move as you turn the wheel. Hidden in
+  between (locked, not yet armed).
 
 Typical loop: pick the gain (Aux2/3/4) → centre Aux6 → raise Aux5 to lock
 → raise Aux1 to arm → scroll Aux6 while watching the tracking response →
@@ -181,8 +183,9 @@ screen, not by watching Betaflight's Receiver tab live.
   sticks and are driven by the PID (CH3 unchanged). The correction should
   be *corrective* (step right → bars move the way that re-centres you) —
   backwards means flip `ROLL_SIGN` / `PITCH_SIGN` in `config.py`.
-- Now armed → scroll Aux6 forward/back → the selected gain ramps (the
-  wheel is inert until this point); watch the tracking response change.
+- Now armed → the top-right readout collapses to the selected gain's
+  live value. Scroll Aux6 forward/back → it ramps (the wheel is inert
+  until this point); watch the value and the tracking response change.
 - Losing the target (SEARCHING) → CH1/CH2 recentre; still armed.
 - **Lower Aux1 → disarm**: CH5 snaps low (disarms the FC), CH1/CH2 return
   to the sticks, PID integrators reset. The gain keeps its new value.
